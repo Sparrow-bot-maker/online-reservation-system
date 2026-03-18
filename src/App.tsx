@@ -76,12 +76,16 @@ export default function App() {
 
   // 驗證時長是否 ≥ 2 小時
   const validateDuration = (value: string): boolean => {
-    // 格式：HH:MM - HH:MM
-    const match = value.match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+    // 支援格式：14:00-16:00, 14:00~16:00, 14:00～16:00 (可含空白)
+    const match = value.match(/^(\d{1,2}):(\d{2})\s*[-~～]\s*(\d{1,2}):(\d{2})$/);
     if (!match) return false;
     const [, sh, sm, eh, em] = match.map(Number);
     const start = sh * 60 + sm;
-    const end = eh * 60 + em;
+    let end = eh * 60 + em;
+    
+    // 跨夜處理（如 23:00~01:00）
+    if (end < start) end += 24 * 60;
+    
     return end - start >= 120;
   };
 
@@ -167,7 +171,7 @@ export default function App() {
 
     // 時長驗證
     if (!validateDuration(formData.specificTime)) {
-      setTimeError('加練時間需至少為 2 小時（含）以上。');
+      setTimeError('加練時間需至少 2 小時，格式請填如：14:00~16:00');
       return;
     }
     setTimeError('');
@@ -622,7 +626,7 @@ export default function App() {
                       ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-200'
                       : 'border-stone-200 focus:border-emerald-500 focus:ring-emerald-200'
                   }`}
-                  placeholder="例如：9:00 - 11:00"
+                  placeholder="例如：14:00~16:00"
                 />
                 {timeError && (
                   <p className="text-xs text-rose-500 mt-1">{timeError}</p>
