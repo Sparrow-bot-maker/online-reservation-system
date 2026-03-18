@@ -269,7 +269,7 @@ export default function App() {
   const renderAdminView = () => {
     if (!isAdminAuth) {
       return (
-        <div className="max-w-md mx-auto mt-12 bg-white p-8 rounded-2xl shadow-sm border border-stone-200">
+        <div className="w-full max-w-md mx-auto mt-12 bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-stone-200 overflow-hidden">
           <div className="flex flex-col items-center mb-6">
             <Shield className="w-12 h-12 text-emerald-600 mb-4" />
             <h2 className="text-2xl font-bold text-stone-800">管理員登入</h2>
@@ -308,8 +308,8 @@ export default function App() {
     }, {});
 
     return (
-      <div className="space-y-6 animate-in fade-in duration-300">
-        <div className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
+      <div className="space-y-6 animate-in fade-in duration-300 w-full min-w-0">
+        <div className="flex justify-between items-center bg-white p-5 md:p-6 rounded-2xl shadow-sm border border-stone-200 overflow-hidden">
           <div className="flex items-center gap-3">
             <Shield className="w-6 h-6 text-emerald-600" />
             <h2 className="text-2xl font-bold text-stone-800">預約總覽</h2>
@@ -331,7 +331,7 @@ export default function App() {
             if (dateBookings.length === 0) return null;
 
             return (
-              <div key={dateObj.value} className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
+              <div key={dateObj.value} className="bg-white p-5 md:p-6 rounded-2xl shadow-sm border border-stone-200 overflow-hidden">
                 <h3 className="text-xl font-bold text-emerald-700 mb-4 border-b border-stone-100 pb-3">
                   {dateObj.display}
                 </h3>
@@ -389,10 +389,10 @@ export default function App() {
   // ─── User 視圖 ───────────────────────────────────────────────
 
   const renderUserView = () => (
-    <div className="grid md:grid-cols-3 gap-8 animate-in fade-in duration-300">
+    <div className="grid md:grid-cols-3 gap-8 animate-in fade-in duration-300 w-full">
       {/* Main Booking Section */}
-      <div className="md:col-span-2 space-y-6">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
+      <div className="md:col-span-2 space-y-6 min-w-0 w-full">
+        <div className="bg-white p-5 md:p-6 rounded-2xl shadow-sm border border-stone-200 overflow-hidden">
           <div className="flex items-center gap-2 mb-4">
             <Calendar className="w-5 h-5 text-emerald-600" />
             <h2 className="text-xl font-semibold">選擇日期</h2>
@@ -414,7 +414,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
+        <div className="bg-white p-5 md:p-6 rounded-2xl shadow-sm border border-stone-200 w-full overflow-hidden">
           <div className="flex items-center gap-2 mb-4">
             <Clock className="w-5 h-5 text-emerald-600" />
             <h2 className="text-xl font-semibold">選擇時段</h2>
@@ -422,7 +422,7 @@ export default function App() {
               <span className="ml-auto text-xs text-stone-400 animate-pulse">載入中…</span>
             )}
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full">
             {TIME_SLOTS.map((time) => {
               const slotBookings = getSlotBookings(selectedDate, time);
               const isFull = slotBookings.length >= MAX_CAPACITY;
@@ -433,20 +433,20 @@ export default function App() {
                   key={time}
                   disabled={isFull || loading}
                   onClick={() => handleBookClick(selectedDate, time)}
-                  className={`relative flex flex-col p-4 rounded-xl border text-left transition-all ${
+                  className={`relative flex flex-col p-3 sm:p-4 rounded-xl border text-left transition-all w-full min-w-0 overflow-hidden ${
                     isFull
                       ? 'bg-stone-100 border-stone-200 opacity-60 cursor-not-allowed'
                       : 'bg-white border-emerald-200 hover:border-emerald-500 hover:shadow-md cursor-pointer'
                   }`}
                 >
-                  <span className={`text-lg font-semibold ${isFull ? 'text-stone-500' : 'text-stone-800'}`}>
+                  <span className={`text-base sm:text-lg font-semibold truncate w-full ${isFull ? 'text-stone-500' : 'text-stone-800'}`}>
                     {time}
                   </span>
-                  <div className="flex justify-between items-center mt-2">
-                    <span className={`text-sm ${isFull ? 'text-rose-500 font-medium' : 'text-emerald-600'}`}>
+                  <div className="flex justify-between items-center mt-1 sm:mt-2 w-full gap-1">
+                    <span className={`text-xs sm:text-sm truncate ${isFull ? 'text-rose-500 font-medium' : 'text-emerald-600'}`}>
                       {isFull ? '已額滿' : `剩餘 ${availableCount} 個名額`}
                     </span>
-                    <span className="text-xs text-stone-400">
+                    <span className="text-[10px] sm:text-xs text-stone-400 shrink-0">
                       {slotBookings.length} / {MAX_CAPACITY}
                     </span>
                   </div>
@@ -458,8 +458,8 @@ export default function App() {
       </div>
 
       {/* Sidebar: My Bookings */}
-      <div className="space-y-6">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
+      <div className="space-y-6 min-w-0 w-full">
+        <div className="bg-white p-5 md:p-6 rounded-2xl shadow-sm border border-stone-200 overflow-hidden">
           <div className="flex items-center gap-2 mb-4">
             <User className="w-5 h-5 text-emerald-600" />
             <h2 className="text-xl font-semibold">我的預約</h2>
@@ -521,7 +521,7 @@ export default function App() {
   // ─── 主渲染 ──────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-stone-50 text-stone-900 font-sans p-4 md:p-8 relative">
+    <div className="min-h-screen bg-stone-50 text-stone-900 font-sans p-4 md:p-8 relative w-full overflow-x-hidden max-w-[100vw]">
       {/* View Toggle Button */}
       <button
         onClick={() => setView(view === 'user' ? 'admin' : 'user')}
@@ -540,8 +540,8 @@ export default function App() {
         )}
       </button>
 
-      <div className="max-w-4xl mx-auto space-y-8 pt-12 md:pt-0">
-        <header className="text-center space-y-2">
+      <div className="max-w-4xl mx-auto space-y-8 pt-12 md:pt-0 w-full">
+        <header className="text-center space-y-2 px-2 md:px-0">
           <h1 className="text-3xl md:text-4xl font-bold text-stone-800 tracking-tight">
             {view === 'user' ? '線上預約系統' : '管理員後台'}
           </h1>
