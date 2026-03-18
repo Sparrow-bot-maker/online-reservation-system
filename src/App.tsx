@@ -622,7 +622,7 @@ export default function App() {
                       ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-200'
                       : 'border-stone-200 focus:border-emerald-500 focus:ring-emerald-200'
                   }`}
-                  placeholder="例如：14:30 - 17:00"
+                  placeholder="例如：9:00 - 11:00"
                 />
                 {timeError && (
                   <p className="text-xs text-rose-500 mt-1">{timeError}</p>
