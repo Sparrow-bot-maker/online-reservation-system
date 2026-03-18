@@ -149,7 +149,13 @@ app.get('/api/admin/bookings', (req, res) => {
 // ─── 啟動 ─────────────────────────────────────────────────
 
 const PORT = process.env.PORT ?? 3001;
-app.listen(PORT, () => {
-  console.log(`✅ 後端伺服器已啟動：http://localhost:${PORT}`);
-  console.log(`   允許預約日期：${getAllowedDates().join(', ')}`);
-});
+
+// 在 Vercel 環境中，不需要自己 listen，Vercel 會自動接管
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`✅ 後端伺服器已啟動：http://localhost:${PORT}`);
+    console.log(`   允許預約日期：${getAllowedDates().join(', ')}`);
+  });
+}
+
+export default app;
