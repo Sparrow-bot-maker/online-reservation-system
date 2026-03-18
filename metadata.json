@@ -1,0 +1,5 @@
+{
+  "name": "線上預約系統",
+  "description": "一個簡單的單頁面預約系統，免登入即可預約未來四天的時段。",
+  "requestFramePermissions": []
+}

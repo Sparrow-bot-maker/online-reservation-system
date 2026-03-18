@@ -1,0 +1,15 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# SQLite 資料庫（含真實用戶個資，勿上傳）
+*.db
+*.db-shm
+*.db-wal
