@@ -48,20 +48,21 @@ app.get('/api/bookings', (req, res) => {
 
 /**
  * POST /api/bookings
- * Body: { date, time, nickname, realName }
+ * Body: { date, time, nickname, realName, specificTime }
  * 新增預約，後端驗證日期範圍與容量
  */
 app.post('/api/bookings', (req, res) => {
-  const { date, time, nickname, realName } = req.body as {
+  const { date, time, nickname, realName, specificTime } = req.body as {
     date?: string;
     time?: string;
     nickname?: string;
     realName?: string;
+    specificTime?: string;
   };
 
   // 欄位驗證
-  if (!date || !time || !nickname || !realName) {
-    res.status(400).json({ error: '請填寫所有必填欄位 (date, time, nickname, realName)' });
+  if (!date || !time || !nickname || !realName || !specificTime) {
+    res.status(400).json({ error: '請填寫所有必填欄位 (date, time, nickname, realName, specificTime)' });
     return;
   }
 
@@ -87,8 +88,8 @@ app.post('/api/bookings', (req, res) => {
   // 新增預約
   const id = Math.random().toString(36).substring(2, 9);
   db.prepare(
-    'INSERT INTO bookings (id, date, time, nickname, real_name) VALUES (?, ?, ?, ?, ?)'
-  ).run(id, date, time, nickname, realName);
+    'INSERT INTO bookings (id, date, time, nickname, real_name, specific_time) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(id, date, time, nickname, realName, specificTime);
 
   res.status(201).json({
     id,
@@ -96,6 +97,7 @@ app.post('/api/bookings', (req, res) => {
     time,
     nickname,
     realName,
+    specificTime,
     message: '預約成功',
   });
 });
@@ -134,12 +136,12 @@ app.get('/api/admin/bookings', (req, res) => {
   const rows = date
     ? db
         .prepare(
-          'SELECT id, date, time, nickname, real_name as realName, created_at FROM bookings WHERE date = ? ORDER BY time, created_at'
+          'SELECT id, date, time, nickname, real_name as realName, specific_time as specificTime, created_at FROM bookings WHERE date = ? ORDER BY time, created_at'
         )
         .all(date)
     : db
         .prepare(
-          'SELECT id, date, time, nickname, real_name as realName, created_at FROM bookings ORDER BY date, time, created_at'
+          'SELECT id, date, time, nickname, real_name as realName, specific_time as specificTime, created_at FROM bookings ORDER BY date, time, created_at'
         )
         .all();
 

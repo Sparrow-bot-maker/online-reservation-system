@@ -8,7 +8,7 @@ type Booking = {
   nickname: string;
 };
 
-type AdminBooking = Booking & { realName: string };
+type AdminBooking = Booking & { realName: string; specificTime: string };
 
 const TIME_SLOTS = [
   '09:00 - 12:00',
@@ -70,8 +70,20 @@ export default function App() {
 
   const [showModal, setShowModal] = useState(false);
   const [bookingSlot, setBookingSlot] = useState<{ date: string; time: string } | null>(null);
-  const [formData, setFormData] = useState({ nickname: '', realName: '' });
+  const [formData, setFormData] = useState({ nickname: '', realName: '', specificTime: '' });
+  const [timeError, setTimeError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // 驗證時長是否 ≥ 2 小時
+  const validateDuration = (value: string): boolean => {
+    // 格式：HH:MM - HH:MM
+    const match = value.match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+    if (!match) return false;
+    const [, sh, sm, eh, em] = match.map(Number);
+    const start = sh * 60 + sm;
+    const end = eh * 60 + em;
+    return end - start >= 120;
+  };
 
   // Admin states
   const [view, setView] = useState<'user' | 'admin'>('user');
@@ -151,7 +163,14 @@ export default function App() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bookingSlot || !formData.nickname || !formData.realName) return;
+    if (!bookingSlot || !formData.nickname || !formData.realName || !formData.specificTime) return;
+
+    // 時長驗證
+    if (!validateDuration(formData.specificTime)) {
+      setTimeError('加練時間需至少為 2 小時（含）以上。');
+      return;
+    }
+    setTimeError('');
 
     setSubmitting(true);
     try {
@@ -163,6 +182,7 @@ export default function App() {
           time: bookingSlot.time,
           nickname: formData.nickname,
           realName: formData.realName,
+          specificTime: formData.specificTime,
         }),
       });
 
@@ -175,7 +195,8 @@ export default function App() {
 
       setMyBookingIds((prev) => [...prev, data.id]);
       await fetchBookings(selectedDate);
-      setFormData({ nickname: '', realName: '' });
+      setFormData({ nickname: '', realName: '', specificTime: '' });
+      setTimeError('');
       setShowModal(false);
       setBookingSlot(null);
     } catch (err) {
@@ -335,6 +356,9 @@ export default function App() {
                               <div className="min-w-0">
                                 <p className="font-medium text-stone-800 truncate">{b.nickname}</p>
                                 <p className="text-xs text-stone-500 truncate">{b.realName}</p>
+                                {b.specificTime && (
+                                  <p className="text-xs text-emerald-600 truncate mt-0.5">⏱ {b.specificTime}</p>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -578,6 +602,31 @@ export default function App() {
                   className="w-full px-4 py-2 rounded-xl border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none transition-all"
                   placeholder="請輸入真實姓名"
                 />
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="specificTime" className="block text-sm font-medium text-stone-700">
+                  具體預約時間 <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  id="specificTime"
+                  type="text"
+                  required
+                  value={formData.specificTime}
+                  onChange={(e) => {
+                    setFormData({ ...formData, specificTime: e.target.value });
+                    setTimeError('');
+                  }}
+                  className={`w-full px-4 py-2 rounded-xl border focus:ring-2 outline-none transition-all ${
+                    timeError
+                      ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-200'
+                      : 'border-stone-200 focus:border-emerald-500 focus:ring-emerald-200'
+                  }`}
+                  placeholder="例如：14:30 - 17:00"
+                />
+                {timeError && (
+                  <p className="text-xs text-rose-500 mt-1">{timeError}</p>
+                )}
               </div>
 
               <div className="pt-4 flex gap-3">
