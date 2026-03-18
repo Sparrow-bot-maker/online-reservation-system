@@ -4,7 +4,6 @@ import db from './db.js';
 const app = express();
 app.use(express.json());
 
-const MAX_CAPACITY = 4;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'admin123';
 
 // ─── 工具函式 ──────────────────────────────────────────────
@@ -70,18 +69,6 @@ app.post('/api/bookings', (req, res) => {
   const allowed = getAllowedDates();
   if (!allowed.includes(date)) {
     res.status(400).json({ error: '預約日期必須在今天至三天後之間' });
-    return;
-  }
-
-  // 容量驗證
-  const count = (
-    db
-      .prepare('SELECT COUNT(*) as cnt FROM bookings WHERE date = ? AND time = ?')
-      .get(date, time) as { cnt: number }
-  ).cnt;
-
-  if (count >= MAX_CAPACITY) {
-    res.status(409).json({ error: '該時段已額滿，無法預約' });
     return;
   }
 

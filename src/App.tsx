@@ -16,8 +16,6 @@ const TIME_SLOTS = [
   '16:00 - 19:00',
 ];
 
-const MAX_CAPACITY = 4;
-
 const generateDates = () => {
   const dates = [];
   // 用 UTC+8 計算今天，確保與後端一致
@@ -425,29 +423,19 @@ export default function App() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full">
             {TIME_SLOTS.map((time) => {
               const slotBookings = getSlotBookings(selectedDate, time);
-              const isFull = slotBookings.length >= MAX_CAPACITY;
-              const availableCount = MAX_CAPACITY - slotBookings.length;
-
               return (
                 <button
                   key={time}
-                  disabled={isFull || loading}
+                  disabled={loading}
                   onClick={() => handleBookClick(selectedDate, time)}
-                  className={`relative flex flex-col p-3 sm:p-4 rounded-xl border text-left transition-all w-full min-w-0 overflow-hidden ${
-                    isFull
-                      ? 'bg-stone-100 border-stone-200 opacity-60 cursor-not-allowed'
-                      : 'bg-white border-emerald-200 hover:border-emerald-500 hover:shadow-md cursor-pointer'
-                  }`}
+                  className="relative flex flex-col p-3 sm:p-4 rounded-xl border text-left transition-all w-full min-w-0 overflow-hidden bg-white border-emerald-200 hover:border-emerald-500 hover:shadow-md cursor-pointer"
                 >
-                  <span className={`text-base sm:text-lg font-semibold truncate w-full ${isFull ? 'text-stone-500' : 'text-stone-800'}`}>
+                  <span className="text-base sm:text-lg font-semibold truncate w-full text-stone-800">
                     {time}
                   </span>
                   <div className="flex justify-between items-center mt-1 sm:mt-2 w-full gap-1">
-                    <span className={`text-xs sm:text-sm truncate ${isFull ? 'text-rose-500 font-medium' : 'text-emerald-600'}`}>
-                      {isFull ? '已額滿' : `剩餘 ${availableCount} 個名額`}
-                    </span>
-                    <span className="text-[10px] sm:text-xs text-stone-400 shrink-0">
-                      {slotBookings.length} / {MAX_CAPACITY}
+                    <span className="text-xs sm:text-sm truncate text-emerald-600">
+                      開放預約中
                     </span>
                   </div>
                 </button>
