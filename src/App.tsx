@@ -11,12 +11,9 @@ type Booking = {
 type AdminBooking = Booking & { realName: string };
 
 const TIME_SLOTS = [
-  '09:00 - 10:00',
-  '10:00 - 11:00',
-  '11:00 - 12:00',
-  '14:00 - 15:00',
-  '15:00 - 16:00',
-  '16:00 - 17:00',
+  '09:00 - 12:00',
+  '14:00 - 16:00',
+  '16:00 - 19:00',
 ];
 
 const MAX_CAPACITY = 4;
@@ -397,7 +394,7 @@ export default function App() {
               <span className="ml-auto text-xs text-stone-400 animate-pulse">載入中…</span>
             )}
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {TIME_SLOTS.map((time) => {
               const slotBookings = getSlotBookings(selectedDate, time);
               const isFull = slotBookings.length >= MAX_CAPACITY;
