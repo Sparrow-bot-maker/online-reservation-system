@@ -72,16 +72,52 @@ export default function App() {
   const [timeError, setTimeError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // 驗證時長是否 ≥ 2 小時
-  const validateDuration = (value: string): boolean => {
-    // 支援格式：14:00-16:00, 14:00~16:00, 14:00～16:00 (可含空白)
-    const match = value.match(/^(\d{1,2}):(\d{2})\s*[-~～]\s*(\d{1,2}):(\d{2})$/);
+  // ─── 時間處理工具 ───────────────────────────────────────────
+  const sanitizeTime = (timeStr: string): string => {
+    let sanitized = timeStr.replace(/\s+/g, '');
+    sanitized = sanitized.replace(/：/g, ':').replace(/[～\-]/g, '~');
+    sanitized = sanitized.replace(/(^|~)(\d):/g, '$10$2:');
+    return sanitized;
+  };
+
+  const isSpecificTimeAllowed = (mainTime: string, specificTime: string): boolean => {
+    const cleanMain = sanitizeTime(mainTime);
+    const [mStart, mEnd] = cleanMain.split('~');
+    const [sStart, sEnd] = specificTime.split('~');
+
+    if (!mStart || !mEnd || !sStart || !sEnd) return false;
+
+    const validateHMS = (time: string) => {
+      const parts = time.split(':');
+      if (parts.length !== 2) return NaN;
+      return Number(parts[0]) * 60 + Number(parts[1]);
+    };
+
+    const mS = validateHMS(mStart);
+    let mE = validateHMS(mEnd);
+    const sS = validateHMS(sStart);
+    let sE = validateHMS(sEnd);
+
+    if (isNaN(mS) || isNaN(mE) || isNaN(sS) || isNaN(sE)) return false;
+
+    if (mE < mS) mE += 1440;
+    
+    let adjustedSS = sS;
+    let adjustedSE = sE;
+    if (sS < mS && mS > 12 * 60) adjustedSS += 1440;
+    if (sE < sS || adjustedSS > adjustedSE) adjustedSE += 1440;
+
+    return adjustedSS >= mS && adjustedSE <= mE;
+  };
+
+  const validateDuration = (sanitizedValue: string): boolean => {
+    // 支援格式此時已清洗為：14:00~16:00
+    const match = sanitizedValue.match(/^(\d{2}):(\d{2})~(\d{2}):(\d{2})$/);
     if (!match) return false;
     const [, sh, sm, eh, em] = match.map(Number);
     const start = sh * 60 + sm;
     let end = eh * 60 + em;
     
-    // 跨夜處理（如 23:00~01:00）
     if (end < start) end += 24 * 60;
     
     return end - start >= 120;
@@ -167,11 +203,20 @@ export default function App() {
     e.preventDefault();
     if (!bookingSlot || !formData.nickname || !formData.realName || !formData.specificTime) return;
 
+    const sanitizedTime = sanitizeTime(formData.specificTime);
+
     // 時長驗證
-    if (!validateDuration(formData.specificTime)) {
+    if (!validateDuration(sanitizedTime)) {
       setTimeError('加練時間需至少 2 小時，格式請填如：14:00~16:00');
       return;
     }
+
+    // 邊界驗證
+    if (!isSpecificTimeAllowed(bookingSlot.time, sanitizedTime)) {
+      setTimeError('您填寫的時間不在選擇的時段範圍內。');
+      return;
+    }
+
     setTimeError('');
 
     setSubmitting(true);
@@ -184,7 +229,7 @@ export default function App() {
           time: bookingSlot.time,
           nickname: formData.nickname,
           realName: formData.realName,
-          specificTime: formData.specificTime,
+          specificTime: sanitizedTime,
         }),
       });
 
