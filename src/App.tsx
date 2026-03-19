@@ -10,11 +10,26 @@ type Booking = {
 
 type AdminBooking = Booking & { realName: string; specificTime: string };
 
-const TIME_SLOTS = [
-  '09:00 - 12:00',
-  '14:00 - 16:00',
-  '16:00 - 19:00',
-];
+const isWeekend = (dateString: string) => {
+  const d = new Date(dateString + 'T00:00:00Z');
+  const day = d.getUTCDay();
+  return day === 0 || day === 6;
+};
+
+const getTimeSlots = (dateString: string) => {
+  if (isWeekend(dateString)) {
+    return [
+      '09:00 - 12:00',
+      '14:00 - 16:00',
+      '16:00 - 18:00',
+    ];
+  }
+  return [
+    '09:00 - 12:00',
+    '14:00 - 16:00',
+    '16:00 - 19:00',
+  ];
+};
 
 const generateDates = () => {
   const dates = [];
@@ -213,7 +228,11 @@ export default function App() {
 
     // 邊界驗證
     if (!isSpecificTimeAllowed(bookingSlot.time, sanitizedTime)) {
-      setTimeError('您填寫的時間不在選擇的時段範圍內。');
+      if (isWeekend(bookingSlot.date) && bookingSlot.time === '16:00 - 18:00') {
+        setTimeError('週末傍晚時段僅開放至 18:00，且預約需滿 2 小時。');
+      } else {
+        setTimeError('您填寫的時間不在選擇的時段範圍內。');
+      }
       return;
     }
 
@@ -379,7 +398,7 @@ export default function App() {
                   {dateObj.display}
                 </h3>
                 <div className="space-y-4">
-                  {TIME_SLOTS.map((time) => {
+                  {getTimeSlots(dateObj.value).map((time) => {
                     const slotBookings = dateBookings.filter((b) => b.time === time);
                     if (slotBookings.length === 0) return null;
 
@@ -467,7 +486,7 @@ export default function App() {
             )}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full">
-            {TIME_SLOTS.map((time) => {
+            {getTimeSlots(selectedDate).map((time) => {
               const slotBookings = getSlotBookings(selectedDate, time);
               return (
                 <button
