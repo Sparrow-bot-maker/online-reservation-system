@@ -312,9 +312,9 @@ export default function App() {
   const renderAdminView = () => {
     if (!isAdminAuth) {
       return (
-        <div className="w-full max-w-md mx-auto mt-12 bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-stone-200 overflow-hidden">
+        <div className="w-full max-w-md mx-auto mt-12 bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
           <div className="flex flex-col items-center mb-6">
-            <Shield className="w-12 h-12 text-emerald-600 mb-4" />
+            <Shield className="w-12 h-12 text-sienna-600 mb-4" />
             <h2 className="text-2xl font-bold text-stone-800">管理員登入</h2>
             <p className="text-sm text-stone-500 mt-2">請輸入密碼以檢視預約總覽</p>
           </div>
@@ -328,14 +328,14 @@ export default function App() {
                   required
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none transition-all"
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all"
                   placeholder="請輸入管理員密碼"
                 />
               </div>
             </div>
             <button
               type="submit"
-              className="w-full py-2.5 bg-emerald-600 text-white rounded-xl font-medium hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-200"
+              className="w-full py-2.5 bg-sienna-600 text-white rounded-xl font-medium hover:bg-sienna-700 transition-colors shadow-sm shadow-sienna-200"
             >
               登入
             </button>
@@ -352,9 +352,9 @@ export default function App() {
 
     return (
       <div className="space-y-6 animate-in fade-in duration-300 w-full min-w-0">
-        <div className="flex justify-between items-center bg-white p-5 md:p-6 rounded-2xl shadow-sm border border-stone-200 overflow-hidden">
+        <div className="flex justify-between items-center bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
           <div className="flex items-center gap-3">
-            <Shield className="w-6 h-6 text-emerald-600" />
+            <Shield className="w-6 h-6 text-sienna-600" />
             <h2 className="text-2xl font-bold text-stone-800">預約總覽</h2>
           </div>
           <button
@@ -374,8 +374,8 @@ export default function App() {
             if (dateBookings.length === 0) return null;
 
             return (
-              <div key={dateObj.value} className="bg-white p-5 md:p-6 rounded-2xl shadow-sm border border-stone-200 overflow-hidden">
-                <h3 className="text-xl font-bold text-emerald-700 mb-4 border-b border-stone-100 pb-3">
+              <div key={dateObj.value} className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
+                <h3 className="text-xl font-bold text-sienna-700 mb-4 border-b border-stone-100 pb-3">
                   {dateObj.display}
                 </h3>
                 <div className="space-y-4">
@@ -387,10 +387,10 @@ export default function App() {
                       <div key={time} className="bg-stone-50 rounded-xl p-4 border border-stone-100">
                         <div className="flex justify-between items-center mb-3">
                           <h4 className="font-semibold text-stone-800 flex items-center gap-2">
-                            <Clock className="w-4 h-4 text-emerald-600" />
+                            <Clock className="w-4 h-4 text-sienna-600" />
                             {time}
                           </h4>
-                          <span className="text-sm font-medium text-emerald-600 bg-emerald-100 px-2 py-1 rounded-md">
+                          <span className="text-sm font-medium text-sienna-600 bg-sienna-100 px-2 py-1 rounded-md">
                             共 {slotBookings.length} 人
                           </span>
                         </div>
@@ -404,7 +404,7 @@ export default function App() {
                                 <p className="font-medium text-stone-800 truncate">{b.nickname}</p>
                                 <p className="text-xs text-stone-500 truncate">{b.realName}</p>
                                 {b.specificTime && (
-                                  <p className="text-xs text-emerald-600 truncate mt-0.5">⏱ {b.specificTime}</p>
+                                  <p className="text-xs text-sienna-600 truncate mt-0.5">⏱ {b.specificTime}</p>
                                 )}
                               </div>
                             </div>
@@ -419,11 +419,12 @@ export default function App() {
           })}
 
           {adminBookings.length === 0 && (
-            <div className="text-center py-16 text-stone-500 bg-white rounded-2xl border border-stone-200 shadow-sm">
+            <div className="text-center py-16 text-stone-500 bg-white rounded-3xl border border-stone-200 shadow-sm">
               <Calendar className="w-12 h-12 mx-auto mb-3 text-stone-300" />
               <p className="text-lg font-medium text-stone-600">目前沒有任何預約紀錄</p>
             </div>
           )}
+          <div className="text-center mt-8 text-stone-400 text-sm">今日訓練辛苦了！記得檢查馬匹狀況與裝備歸位唷。🐎</div>
         </div>
       </div>
     );
@@ -435,10 +436,10 @@ export default function App() {
     <div className="grid md:grid-cols-3 gap-8 animate-in fade-in duration-300 w-full">
       {/* Main Booking Section */}
       <div className="md:col-span-2 space-y-6 min-w-0 w-full">
-        <div className="bg-white p-5 md:p-6 rounded-2xl shadow-sm border border-stone-200 overflow-hidden">
+        <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
           <div className="flex items-center gap-2 mb-4">
-            <Calendar className="w-5 h-5 text-emerald-600" />
-            <h2 className="text-xl font-semibold">選擇日期</h2>
+            <Calendar className="w-5 h-5 text-sienna-600" />
+            <h2 className="text-xl font-semibold">選擇日期 <span className="text-xl ml-1">🐎</span></h2>
           </div>
           <div className="flex overflow-x-auto gap-2 pb-2">
             {dates.map((d) => (
@@ -447,7 +448,7 @@ export default function App() {
                 onClick={() => setSelectedDate(d.value)}
                 className={`whitespace-nowrap px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
                   selectedDate === d.value
-                    ? 'bg-emerald-600 text-white shadow-md'
+                    ? 'bg-sienna-600 text-white shadow-md'
                     : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                 }`}
               >
@@ -457,9 +458,9 @@ export default function App() {
           </div>
         </div>
 
-        <div className="bg-white p-5 md:p-6 rounded-2xl shadow-sm border border-stone-200 w-full overflow-hidden">
+        <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 w-full overflow-hidden">
           <div className="flex items-center gap-2 mb-4">
-            <Clock className="w-5 h-5 text-emerald-600" />
+            <Clock className="w-5 h-5 text-sienna-600" />
             <h2 className="text-xl font-semibold">選擇時段</h2>
             {loading && (
               <span className="ml-auto text-xs text-stone-400 animate-pulse">載入中…</span>
@@ -473,13 +474,13 @@ export default function App() {
                   key={time}
                   disabled={loading}
                   onClick={() => handleBookClick(selectedDate, time)}
-                  className="relative flex flex-col p-3 sm:p-4 rounded-xl border text-left transition-all w-full min-w-0 overflow-hidden bg-white border-emerald-200 hover:border-emerald-500 hover:shadow-md cursor-pointer"
+                  className="relative flex flex-col p-3 sm:p-4 rounded-xl border text-left transition-all w-full min-w-0 overflow-hidden bg-white border-sienna-200 hover:border-sienna-500 hover:shadow-md cursor-pointer"
                 >
                   <span className="text-base sm:text-lg font-semibold truncate w-full text-stone-800">
                     {time}
                   </span>
                   <div className="flex justify-between items-center mt-1 sm:mt-2 w-full gap-1">
-                    <span className="text-xs sm:text-sm truncate text-emerald-600">
+                    <span className="text-xs sm:text-sm truncate text-sienna-600">
                       開放預約中
                     </span>
                   </div>
@@ -492,9 +493,9 @@ export default function App() {
 
       {/* Sidebar: My Bookings */}
       <div className="space-y-6 min-w-0 w-full">
-        <div className="bg-white p-5 md:p-6 rounded-2xl shadow-sm border border-stone-200 overflow-hidden">
+        <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
           <div className="flex items-center gap-2 mb-4">
-            <User className="w-5 h-5 text-emerald-600" />
+            <User className="w-5 h-5 text-sienna-600" />
             <h2 className="text-xl font-semibold">我的預約</h2>
           </div>
 
@@ -558,7 +559,7 @@ export default function App() {
       {/* View Toggle Button */}
       <button
         onClick={() => setView(view === 'user' ? 'admin' : 'user')}
-        className="absolute top-4 right-4 md:top-8 md:right-8 flex items-center gap-2 px-4 py-2 bg-white border border-stone-200 text-stone-700 rounded-xl text-sm font-medium hover:bg-stone-50 hover:text-emerald-600 transition-colors shadow-sm z-10"
+        className="absolute top-4 right-4 md:top-8 md:right-8 flex items-center gap-2 px-4 py-2 bg-white border border-stone-200 text-stone-700 rounded-xl text-sm font-medium hover:bg-stone-50 hover:text-sienna-600 transition-colors shadow-sm z-10"
       >
         {view === 'user' ? (
           <>
@@ -576,7 +577,7 @@ export default function App() {
       <div className="max-w-4xl mx-auto space-y-8 pt-12 md:pt-0 w-full">
         <header className="text-center space-y-2 px-2 md:px-0">
           <h1 className="text-3xl md:text-4xl font-bold text-stone-800 tracking-tight">
-            {view === 'user' ? '線上預約系統' : '管理員後台'}
+            {view === 'user' ? '114-2 馬術社加練預約系統' : '管理員後台'}
           </h1>
           <p className="text-stone-500">
             {view === 'user' ? '免登入即可預約，開放今日起四天內之時段' : '檢視與管理所有預約紀錄'}
@@ -589,7 +590,7 @@ export default function App() {
       {/* Booking Modal */}
       {view === 'user' && showModal && bookingSlot && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="p-6 border-b border-stone-100 flex justify-between items-center">
               <h3 className="text-xl font-semibold text-stone-800">填寫預約資料</h3>
               <button
@@ -601,8 +602,8 @@ export default function App() {
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <div className="bg-emerald-50 text-emerald-800 p-3 rounded-lg text-sm flex items-start gap-2 mb-6">
-                <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-600" />
+              <div className="bg-sienna-50 text-sienna-800 p-3 rounded-lg text-sm flex items-start gap-2 mb-6">
+                <CheckCircle2 className="w-5 h-5 shrink-0 text-sienna-600" />
                 <div>
                   <p className="font-medium">您正在預約：</p>
                   <p>
@@ -621,7 +622,7 @@ export default function App() {
                   required
                   value={formData.nickname}
                   onChange={(e) => setFormData({ ...formData, nickname: e.target.value })}
-                  className="w-full px-4 py-2 rounded-xl border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none transition-all"
+                  className="w-full px-4 py-2 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all"
                   placeholder="請輸入綽號"
                 />
               </div>
@@ -636,7 +637,7 @@ export default function App() {
                   required
                   value={formData.realName}
                   onChange={(e) => setFormData({ ...formData, realName: e.target.value })}
-                  className="w-full px-4 py-2 rounded-xl border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none transition-all"
+                  className="w-full px-4 py-2 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all"
                   placeholder="請輸入真實姓名"
                 />
               </div>
@@ -657,7 +658,7 @@ export default function App() {
                   className={`w-full px-4 py-2 rounded-xl border focus:ring-2 outline-none transition-all ${
                     timeError
                       ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-200'
-                      : 'border-stone-200 focus:border-emerald-500 focus:ring-emerald-200'
+                      : 'border-stone-200 focus:border-sienna-500 focus:ring-sienna-200'
                   }`}
                   placeholder="例如：14:00~16:00"
                 />
@@ -677,9 +678,9 @@ export default function App() {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="flex-1 px-4 py-2.5 rounded-xl bg-emerald-600 text-white font-medium hover:bg-emerald-700 shadow-sm shadow-emerald-200 transition-colors disabled:opacity-60"
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-sienna-600 text-white font-medium hover:bg-sienna-700 shadow-sm shadow-sienna-200 transition-colors disabled:opacity-60"
                 >
-                  {submitting ? '預約中…' : '確認預約'}
+                  {submitting ? '預約中…' : '確認上馬！'}
                 </button>
               </div>
             </form>

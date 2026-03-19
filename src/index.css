@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+@theme {
+  --color-sienna-50: #fdf8f6;
+  --color-sienna-100: #f6efe1;
+  --color-sienna-200: #e6dec3;
+  --color-sienna-300: #d6ccb0;
+  --color-sienna-400: #c4b693;
+  --color-sienna-500: #A0522D;
+  --color-sienna-600: #8f4826;
+  --color-sienna-700: #743a1e;
+  --color-sienna-800: #5c2d15;
+  --color-sienna-900: #4a240b;
+}
+
 html, body {
   max-width: 100vw;
   overflow-x: hidden;
