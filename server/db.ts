@@ -14,6 +14,11 @@ export async function initDb() {
         created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `;
+
+    // 確保新增 attendance_status 和 note 欄位
+    await sql`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS attendance_status VARCHAR(50) DEFAULT 'pending';`;
+    await sql`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS note TEXT DEFAULT '';`;
+
     console.log('✅ 資料庫資料表結構確保完畢 (Vercel Postgres)');
   } catch (err) {
     console.error('❌ 初始化資料庫失敗:', err);

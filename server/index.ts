@@ -191,11 +191,11 @@ app.get('/api/admin/bookings', async (req, res) => {
   try {
     const { rows } = date
       ? await sql`
-          SELECT id, date, time, nickname, real_name as "realName", specific_time as "specificTime", created_at 
+          SELECT id, date, time, nickname, real_name as "realName", specific_time as "specificTime", attendance_status, note, created_at 
           FROM bookings WHERE date = ${date} ORDER BY time, created_at
         `
       : await sql`
-          SELECT id, date, time, nickname, real_name as "realName", specific_time as "specificTime", created_at 
+          SELECT id, date, time, nickname, real_name as "realName", specific_time as "specificTime", attendance_status, note, created_at 
           FROM bookings ORDER BY date, time, created_at
         `;
 
@@ -203,6 +203,36 @@ app.get('/api/admin/bookings', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '資料庫查詢錯誤' });
+  }
+});
+
+/**
+ * PATCH /api/admin/bookings/:id
+ * Header: x-admin-password: <password>
+ * 更新出缺席狀態或備註
+ */
+app.patch('/api/admin/bookings/:id', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+
+  const { id } = req.params;
+  const { attendance_status, note } = req.body;
+
+  try {
+    if (attendance_status !== undefined && note !== undefined) {
+      await sql`UPDATE bookings SET attendance_status = ${attendance_status}, note = ${note} WHERE id = ${id}`;
+    } else if (attendance_status !== undefined) {
+      await sql`UPDATE bookings SET attendance_status = ${attendance_status} WHERE id = ${id}`;
+    } else if (note !== undefined) {
+      await sql`UPDATE bookings SET note = ${note} WHERE id = ${id}`;
+    }
+    res.json({ message: '更新成功' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫寫入錯誤' });
   }
 });
 

@@ -8,7 +8,7 @@ type Booking = {
   nickname: string;
 };
 
-type AdminBooking = Booking & { realName: string; specificTime: string };
+type AdminBooking = Booking & { realName: string; specificTime: string; attendance_status?: string; note?: string };
 
 const isWeekend = (dateString: string) => {
   const d = new Date(dateString + 'T00:00:00Z');
@@ -141,8 +141,50 @@ export default function App() {
   // Admin states
   const [view, setView] = useState<'user' | 'admin'>('user');
   const [isAdminAuth, setIsAdminAuth] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [adminBookings, setAdminBookings] = useState<AdminBooking[]>([]);
+  
+  // Admin Members View states
+  const [adminTab, setAdminTab] = useState<'overview' | 'members'>('overview');
+  const [memberSearch, setMemberSearch] = useState('');
+  const [selectedMember, setSelectedMember] = useState<string | null>(null);
+
+  const calculateHours = (timeStr: string) => {
+    try {
+      if (!timeStr) return 0;
+      const clean = sanitizeTime(timeStr);
+      const match = clean.match(/^(\d{2}):(\d{2})~(\d{2}):(\d{2})$/);
+      if (!match) return 0;
+      const [, sh, sm, eh, em] = match.map(Number);
+      let durationMs = (eh * 60 + em) - (sh * 60 + sm);
+      if (durationMs < 0) durationMs += 24 * 60;
+      return durationMs / 60;
+    } catch {
+      return 0; // 防呆處理錯誤格式返回 0 小時
+    }
+  };
+
+  const updateAdminBooking = async (id: string, updates: { attendance_status?: string; note?: string }) => {
+    try {
+      const res = await fetch(`/api/admin/bookings/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-password': adminPassword,
+        },
+        body: JSON.stringify(updates),
+      });
+      if (res.ok) {
+        setAdminBookings(prev => prev.map(b => b.id === id ? { ...b, ...updates } : b));
+      } else {
+        alert('更新失敗');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('網路錯誤');
+    }
+  };
 
   // ─── 儲存「我的預約 id」到 localStorage ─────────────────────
   useEffect(() => {
@@ -314,6 +356,7 @@ export default function App() {
       const data = await res.json();
       setAdminBookings(data);
       setIsAdminAuth(true);
+      setAdminPassword(pwd);
       setPasswordInput('');
     } catch (err) {
       alert('網路錯誤，請重試');
@@ -371,21 +414,148 @@ export default function App() {
 
     return (
       <div className="space-y-6 animate-in fade-in duration-300 w-full min-w-0">
-        <div className="flex justify-between items-center bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 overflow-hidden gap-4">
           <div className="flex items-center gap-3">
             <Shield className="w-6 h-6 text-sienna-600" />
-            <h2 className="text-2xl font-bold text-stone-800">預約總覽</h2>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setAdminTab('overview')}
+                className={`px-4 py-2 font-bold rounded-xl transition-colors ${adminTab === 'overview' ? 'bg-sienna-100 text-sienna-700' : 'text-stone-500 hover:bg-stone-100'}`}
+              >
+                預約總覽
+              </button>
+              <button 
+                onClick={() => setAdminTab('members')}
+                className={`px-4 py-2 font-bold rounded-xl transition-colors ${adminTab === 'members' ? 'bg-sienna-100 text-sienna-700' : 'text-stone-500 hover:bg-stone-100'}`}
+              >
+                成員名冊
+              </button>
+            </div>
           </div>
           <button
             onClick={() => {
               setIsAdminAuth(false);
               setAdminBookings([]);
+              setAdminPassword('');
             }}
             className="text-sm font-medium text-stone-500 hover:text-stone-800 px-4 py-2 rounded-lg hover:bg-stone-100 transition-colors"
           >
             登出
           </button>
         </div>
+
+        {adminTab === 'members' ? (
+          <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
+            {selectedMember ? (
+              <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-xl md:text-2xl font-bold text-stone-800 flex items-center gap-2">
+                    <User className="w-5 h-5 md:w-6 md:h-6 text-sienna-600" />
+                    {selectedMember} 的個別紀錄
+                  </h3>
+                  <button onClick={() => setSelectedMember(null)} className="text-sienna-600 bg-sienna-50 hover:bg-sienna-100 px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors font-medium text-sm md:text-base">返回名單</button>
+                </div>
+                
+                {(() => {
+                  const memberRecords = adminBookings.filter(b => b.realName === selectedMember).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                  const attendedRecords = memberRecords.filter(b => b.attendance_status === 'attended');
+                  const totalAttendedCount = attendedRecords.length;
+                  const totalPracticeHours = attendedRecords.reduce((sum, b) => sum + calculateHours(b.specificTime), 0);
+
+                  return (
+                    <>
+                      <div className="flex gap-4 md:gap-6 bg-stone-50 p-4 rounded-xl border border-stone-100">
+                        <div>
+                          <p className="text-xs md:text-sm text-stone-500">總出席次數</p>
+                          <p className="text-xl md:text-2xl font-bold text-stone-800">{totalAttendedCount} 次</p>
+                        </div>
+                        <div>
+                          <p className="text-xs md:text-sm text-stone-500">總加練時數</p>
+                          <p className="text-xl md:text-2xl font-bold text-stone-800">{totalPracticeHours} 小時</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4 pr-1">
+                        {memberRecords.map(b => (
+                          <div key={b.id} className="bg-white border rounded-xl p-3 md:p-4 shadow-sm flex flex-col gap-3 border-stone-200">
+                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 w-full">
+                              <div className="min-w-0">
+                                <p className="font-bold text-stone-800">{b.date} {b.time}</p>
+                                <p className="text-sm text-stone-600">綽號：{b.nickname}</p>
+                                {b.specificTime && <p className="text-sm text-sienna-600 mt-0.5">⏱ {b.specificTime} ({calculateHours(b.specificTime)} hr)</p>}
+                              </div>
+                              <div className="flex bg-stone-100 rounded-lg p-1 shrink-0 w-full md:w-auto overflow-x-auto">
+                                {['pending', 'attended', 'absent'].map(status => (
+                                  <button
+                                    key={status}
+                                    onClick={() => updateAdminBooking(b.id, { attendance_status: status })}
+                                    className={`flex-1 md:flex-none px-3 py-1.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap ${
+                                      (b.attendance_status || 'pending') === status 
+                                        ? status === 'attended' ? 'bg-emerald-500 text-white shadow-sm scale-105' 
+                                        : status === 'absent' ? 'bg-rose-500 text-white shadow-sm scale-105' 
+                                        : 'bg-stone-300 text-stone-700 shadow-sm scale-105'
+                                        : 'text-stone-500 hover:bg-stone-200'
+                                    }`}
+                                  >
+                                    {status === 'attended' ? '✅ 已點名' : status === 'absent' ? '❌ 未加練' : '⏳ 待確認'}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <input
+                              type="text"
+                              placeholder="新增教練備註..."
+                              className="w-full text-sm bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 outline-none focus:border-sienna-400 focus:bg-white transition-all text-stone-800"
+                              value={b.note || ''}
+                              onChange={(e) => {
+                                setAdminBookings(prev => prev.map(item => item.id === b.id ? { ...item, note: e.target.value } : item));
+                              }}
+                              onBlur={(e) => updateAdminBooking(b.id, { note: e.target.value })}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            ) : (
+              <div className="space-y-4 animate-in fade-in duration-300">
+                <div className="relative">
+                  <input 
+                    type="text" 
+                    placeholder="搜尋成員本名..." 
+                    value={memberSearch}
+                    onChange={(e) => setMemberSearch(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all"
+                  />
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2">
+                    <User className="w-5 h-5 text-stone-400" />
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {(() => {
+                    const uniqueMembers = Array.from(new Set(adminBookings.map(b => b.realName))) as string[];
+                    const filteredMembers = uniqueMembers.filter(m => m.includes(memberSearch));
+                    return filteredMembers.map(m => (
+                      <button 
+                        key={m} 
+                        onClick={() => setSelectedMember(m)}
+                        className="p-4 rounded-xl border border-stone-200 bg-stone-50 hover:bg-sienna-50 hover:border-sienna-200 hover:text-sienna-700 transition-all text-left font-medium text-stone-800 truncate"
+                      >
+                        {m}
+                      </button>
+                    ));
+                  })()}
+                  {(Array.from(new Set(adminBookings.map(b => b.realName))) as string[]).filter(m => m.includes(memberSearch)).length === 0 && (
+                    <p className="text-stone-500 col-span-full py-4 text-center">無符合條件的成員</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
 
         <div className="space-y-6">
           {dates.map((dateObj) => {
@@ -445,6 +615,7 @@ export default function App() {
           )}
           <div className="text-center mt-8 text-stone-400 text-sm">今日訓練辛苦了！記得檢查馬匹狀況與裝備歸位唷。🐎</div>
         </div>
+        )}
       </div>
     );
   };
