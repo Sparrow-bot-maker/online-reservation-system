@@ -8,7 +8,7 @@ type Booking = {
   nickname: string;
 };
 
-type AdminBooking = Booking & { realName: string; specificTime: string; attendance_status?: string; note?: string };
+type AdminBooking = Booking & { realName: string; specificTime: string; actualTime?: string; attendance_status?: string; note?: string };
 
 const isWeekend = (dateString: string) => {
   const d = new Date(dateString + 'T00:00:00Z');
@@ -150,10 +150,12 @@ export default function App() {
   const [memberSearch, setMemberSearch] = useState('');
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
 
-  const calculateHours = (timeStr: string) => {
+  const calculateHours = (timeStr: string, actualTimeStr?: string) => {
+    // 後台覆蓋時間優先；無覆蓋則用原始 specificTime
+    const target = actualTimeStr || timeStr;
     try {
-      if (!timeStr) return 0;
-      const clean = sanitizeTime(timeStr);
+      if (!target) return 0;
+      const clean = sanitizeTime(target);
       const match = clean.match(/^(\d{2}):(\d{2})~(\d{2}):(\d{2})$/);
       if (!match) return 0;
       const [, sh, sm, eh, em] = match.map(Number);
@@ -161,11 +163,11 @@ export default function App() {
       if (durationMs < 0) durationMs += 24 * 60;
       return durationMs / 60;
     } catch {
-      return 0; // 防呆處理錯誤格式返回 0 小時
+      return 0;
     }
   };
 
-  const updateAdminBooking = async (id: string, updates: { attendance_status?: string; note?: string }) => {
+  const updateAdminBooking = async (id: string, updates: { attendance_status?: string; note?: string; actual_time?: string }) => {
     try {
       const res = await fetch(`/api/admin/bookings/${id}`, {
         method: 'PATCH',
@@ -460,7 +462,7 @@ export default function App() {
                   const memberRecords = adminBookings.filter(b => b.realName === selectedMember).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
                   const attendedRecords = memberRecords.filter(b => b.attendance_status === 'attended');
                   const totalAttendedCount = attendedRecords.length;
-                  const totalPracticeHours = attendedRecords.reduce((sum, b) => sum + calculateHours(b.specificTime), 0);
+                  const totalPracticeHours = attendedRecords.reduce((sum, b) => sum + calculateHours(b.specificTime, b.actualTime), 0);
 
                   return (
                     <>
@@ -482,7 +484,11 @@ export default function App() {
                               <div className="min-w-0">
                                 <p className="font-bold text-stone-800">{b.date} {b.time}</p>
                                 <p className="text-sm text-stone-600">綽號：{b.nickname}</p>
-                                {b.specificTime && <p className="text-sm text-sienna-600 mt-0.5">⏱ {b.specificTime} ({calculateHours(b.specificTime)} hr)</p>}
+                                {b.actualTime ? (
+                                  <p className="text-sm text-amber-600 mt-0.5">✏️ {b.actualTime} ({calculateHours(b.specificTime, b.actualTime)} hr) <span className="text-xs text-stone-400 line-through">{b.specificTime}</span></p>
+                                ) : (
+                                  b.specificTime && <p className="text-sm text-sienna-600 mt-0.5">⏱ {b.specificTime} ({calculateHours(b.specificTime)} hr)</p>
+                                )}
                               </div>
                               <div className="flex bg-stone-100 rounded-lg p-1 shrink-0 w-full md:w-auto overflow-x-auto">
                                 {['pending', 'attended', 'absent'].map(status => (
@@ -512,6 +518,34 @@ export default function App() {
                               }}
                               onBlur={(e) => updateAdminBooking(b.id, { note: e.target.value })}
                             />
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-stone-400 shrink-0">✏️ 時間覆蓋</span>
+                              <input
+                                type="text"
+                                placeholder={b.specificTime ? `原時間：${b.specificTime}` : '輸入覆蓋時間，如 09:00~14:00'}
+                                className="flex-1 text-sm bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 outline-none focus:border-amber-400 focus:bg-white transition-all text-stone-800"
+                                value={b.actualTime || ''}
+                                onChange={(e) => {
+                                  setAdminBookings(prev => prev.map(item => item.id === b.id ? { ...item, actualTime: e.target.value } : item));
+                                }}
+                                onBlur={(e) => {
+                                  const raw = e.target.value.trim();
+                                  const cleaned = raw ? sanitizeTime(raw) : '';
+                                  setAdminBookings(prev => prev.map(item => item.id === b.id ? { ...item, actualTime: cleaned || undefined } : item));
+                                  updateAdminBooking(b.id, { actual_time: cleaned });
+                                }}
+                              />
+                              {b.actualTime && (
+                                <button
+                                  onClick={() => {
+                                    setAdminBookings(prev => prev.map(item => item.id === b.id ? { ...item, actualTime: undefined } : item));
+                                    updateAdminBooking(b.id, { actual_time: '' });
+                                  }}
+                                  className="text-xs text-stone-400 hover:text-rose-500 shrink-0 transition-colors"
+                                  title="清除覆蓋"
+                                >✕</button>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>

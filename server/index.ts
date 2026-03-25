@@ -191,11 +191,11 @@ app.get('/api/admin/bookings', async (req, res) => {
   try {
     const { rows } = date
       ? await sql`
-          SELECT id, date, time, nickname, real_name as "realName", specific_time as "specificTime", attendance_status, note, created_at 
+          SELECT id, date, time, nickname, real_name as "realName", specific_time as "specificTime", actual_time as "actualTime", attendance_status, note, created_at 
           FROM bookings WHERE date = ${date} ORDER BY time, created_at
         `
       : await sql`
-          SELECT id, date, time, nickname, real_name as "realName", specific_time as "specificTime", attendance_status, note, created_at 
+          SELECT id, date, time, nickname, real_name as "realName", specific_time as "specificTime", actual_time as "actualTime", attendance_status, note, created_at 
           FROM bookings ORDER BY date, time, created_at
         `;
 
@@ -219,9 +219,14 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
   }
 
   const { id } = req.params;
-  const { attendance_status, note } = req.body;
+  const { attendance_status, note, actual_time } = req.body;
 
   try {
+    if (actual_time !== undefined) {
+      // 後台時間覆蓋：無格式限制，允許 null 清除覆蓋
+      const val = actual_time === '' ? null : actual_time;
+      await sql`UPDATE bookings SET actual_time = ${val} WHERE id = ${id}`;
+    }
     if (attendance_status !== undefined && note !== undefined) {
       await sql`UPDATE bookings SET attendance_status = ${attendance_status}, note = ${note} WHERE id = ${id}`;
     } else if (attendance_status !== undefined) {
