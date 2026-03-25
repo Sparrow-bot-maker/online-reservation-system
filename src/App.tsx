@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Calendar, Clock, User, X, CheckCircle2, AlertCircle, Shield, Lock } from 'lucide-react';
+import { Calendar, Clock, User, X, CheckCircle2, AlertCircle, Shield, Lock, Trash2 } from 'lucide-react';
 
 type Booking = {
   id: string;
@@ -149,6 +149,9 @@ export default function App() {
   const [adminTab, setAdminTab] = useState<'overview' | 'members'>('overview');
   const [memberSearch, setMemberSearch] = useState('');
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
+  // 唠除確認 state
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteMember, setConfirmDeleteMember] = useState(false);
 
   const calculateHours = (timeStr: string, actualTimeStr?: string) => {
     // 後台覆蓋時間優先；無覆蓋則用原始 specificTime
@@ -185,6 +188,52 @@ export default function App() {
     } catch (err) {
       console.error(err);
       alert('網路錯誤');
+    }
+  };
+
+  // 啨除單筆預約（管理員）
+  const deleteAdminBooking = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin/bookings/${id}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-password': adminPassword },
+      });
+      if (res.ok) {
+        const remaining = adminBookings.filter(b => b.id !== id);
+        setAdminBookings(remaining);
+        // 若該成員已無任何紀錄，自動返回名單
+        if (selectedMember && remaining.filter(b => b.realName === selectedMember).length === 0) {
+          setSelectedMember(null);
+        }
+      } else {
+        alert('啨除失敗');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('網路錯誤');
+    } finally {
+      setConfirmDeleteId(null);
+    }
+  };
+
+  // 啨除成員所有紀錄
+  const deleteAdminMember = async (realName: string) => {
+    try {
+      const res = await fetch(`/api/admin/members/${encodeURIComponent(realName)}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-password': adminPassword },
+      });
+      if (res.ok) {
+        setAdminBookings(prev => prev.filter(b => b.realName !== realName));
+        setSelectedMember(null); // 返回名單
+      } else {
+        alert('啨除失敗');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('網路錯誤');
+    } finally {
+      setConfirmDeleteMember(false);
     }
   };
 
@@ -455,7 +504,24 @@ export default function App() {
                     <User className="w-5 h-5 md:w-6 md:h-6 text-sienna-600" />
                     {selectedMember} 的個別紀錄
                   </h3>
-                  <button onClick={() => setSelectedMember(null)} className="text-sienna-600 bg-sienna-50 hover:bg-sienna-100 px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors font-medium text-sm md:text-base">返回名單</button>
+                  <div className="flex items-center gap-2">
+                    {confirmDeleteMember ? (
+                      <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3 py-1.5">
+                        <span className="text-xs font-medium text-rose-700">確定全喈除？無法復原！</span>
+                        <button onClick={() => deleteAdminMember(selectedMember!)} className="text-xs bg-rose-600 text-white px-2 py-1 rounded-lg hover:bg-rose-700 transition-colors font-semibold">確定</button>
+                        <button onClick={() => setConfirmDeleteMember(false)} className="text-xs text-stone-500 hover:text-stone-700 px-2 py-1 rounded-lg hover:bg-stone-100 transition-colors">取消</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmDeleteMember(true)}
+                        className="flex items-center gap-1 text-xs font-medium text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-3 py-1.5 rounded-lg transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        啨除所有紀錄
+                      </button>
+                    )}
+                    <button onClick={() => { setSelectedMember(null); setConfirmDeleteMember(false); }} className="text-sienna-600 bg-sienna-50 hover:bg-sienna-100 px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors font-medium text-sm md:text-base">返回名單</button>
+                  </div>
                 </div>
                 
                 {(() => {
@@ -490,22 +556,40 @@ export default function App() {
                                   b.specificTime && <p className="text-sm text-sienna-600 mt-0.5">⏱ {b.specificTime} ({calculateHours(b.specificTime)} hr)</p>
                                 )}
                               </div>
-                              <div className="flex bg-stone-100 rounded-lg p-1 shrink-0 w-full md:w-auto overflow-x-auto">
-                                {['pending', 'attended', 'absent'].map(status => (
+                              <div className="flex flex-col gap-2 w-full md:w-auto">
+                                <div className="flex bg-stone-100 rounded-lg p-1 shrink-0 w-full md:w-auto overflow-x-auto">
+                                  {['pending', 'attended', 'absent'].map(status => (
+                                    <button
+                                      key={status}
+                                      onClick={() => updateAdminBooking(b.id, { attendance_status: status })}
+                                      className={`flex-1 md:flex-none px-3 py-1.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap ${
+                                        (b.attendance_status || 'pending') === status 
+                                          ? status === 'attended' ? 'bg-emerald-500 text-white shadow-sm scale-105' 
+                                          : status === 'absent' ? 'bg-rose-500 text-white shadow-sm scale-105' 
+                                          : 'bg-stone-300 text-stone-700 shadow-sm scale-105'
+                                          : 'text-stone-500 hover:bg-stone-200'
+                                      }`}
+                                    >
+                                      {status === 'attended' ? '✅ 已點名' : status === 'absent' ? '❌ 未加練' : '⏳ 待確認'}
+                                    </button>
+                                  ))}
+                                </div>
+                                {/* 單筆啨除確認 */}
+                                {confirmDeleteId === b.id ? (
+                                  <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1.5">
+                                    <span className="text-xs text-rose-700 font-medium">無法復原！</span>
+                                    <button onClick={() => deleteAdminBooking(b.id)} className="text-xs bg-rose-600 text-white px-2 py-1 rounded hover:bg-rose-700 font-semibold">全喈除</button>
+                                    <button onClick={() => setConfirmDeleteId(null)} className="text-xs text-stone-500 hover:text-stone-700 px-2 py-1 rounded hover:bg-stone-100">取消</button>
+                                  </div>
+                                ) : (
                                   <button
-                                    key={status}
-                                    onClick={() => updateAdminBooking(b.id, { attendance_status: status })}
-                                    className={`flex-1 md:flex-none px-3 py-1.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap ${
-                                      (b.attendance_status || 'pending') === status 
-                                        ? status === 'attended' ? 'bg-emerald-500 text-white shadow-sm scale-105' 
-                                        : status === 'absent' ? 'bg-rose-500 text-white shadow-sm scale-105' 
-                                        : 'bg-stone-300 text-stone-700 shadow-sm scale-105'
-                                        : 'text-stone-500 hover:bg-stone-200'
-                                    }`}
+                                    onClick={() => setConfirmDeleteId(b.id)}
+                                    className="flex items-center gap-1 text-xs text-rose-500 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 px-2 py-1.5 rounded-lg transition-colors"
                                   >
-                                    {status === 'attended' ? '✅ 已點名' : status === 'absent' ? '❌ 未加練' : '⏳ 待確認'}
+                                    <Trash2 className="w-3 h-3" />
+                                    啨除此筆
                                   </button>
-                                ))}
+                                )}
                               </div>
                             </div>
                             <input

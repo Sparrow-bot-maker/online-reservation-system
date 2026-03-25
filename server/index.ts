@@ -241,6 +241,54 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
   }
 });
 
+/**
+ * DELETE /api/admin/bookings/:id
+ * Header: x-admin-password: <password>
+ * 管理員刪除單筆預約
+ */
+app.delete('/api/admin/bookings/:id', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+
+  const { id } = req.params;
+  try {
+    const result = await sql`DELETE FROM bookings WHERE id = ${id} RETURNING id`;
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: '找不到此預約' });
+      return;
+    }
+    res.json({ message: '已刪除' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫刪除錯誤' });
+  }
+});
+
+/**
+ * DELETE /api/admin/members/:realName
+ * Header: x-admin-password: <password>
+ * 管理員刪除某成員的所有預約紀錄
+ */
+app.delete('/api/admin/members/:realName', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+
+  const { realName } = req.params;
+  try {
+    const result = await sql`DELETE FROM bookings WHERE real_name = ${realName} RETURNING id`;
+    res.json({ message: `已刪除 ${result.rowCount} 筆紀錄`, deleted: result.rowCount });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫刪除錯誤' });
+  }
+});
+
 // ─── 啟動 ─────────────────────────────────────────────────
 
 const PORT = process.env.PORT ?? 3001;
