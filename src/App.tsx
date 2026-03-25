@@ -149,7 +149,7 @@ export default function App() {
   const [adminTab, setAdminTab] = useState<'overview' | 'members'>('overview');
   const [memberSearch, setMemberSearch] = useState('');
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
-  // 唠除確認 state
+  // 刪除確認 state
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmDeleteMember, setConfirmDeleteMember] = useState(false);
 
@@ -191,7 +191,7 @@ export default function App() {
     }
   };
 
-  // 啨除單筆預約（管理員）
+  // 刪除單筆預約（管理員）
   const deleteAdminBooking = async (id: string) => {
     try {
       const res = await fetch(`/api/admin/bookings/${id}`, {
@@ -206,7 +206,7 @@ export default function App() {
           setSelectedMember(null);
         }
       } else {
-        alert('啨除失敗');
+        alert('刪除失敗');
       }
     } catch (err) {
       console.error(err);
@@ -216,7 +216,7 @@ export default function App() {
     }
   };
 
-  // 啨除成員所有紀錄
+  // 刪除成員所有紀錄
   const deleteAdminMember = async (realName: string) => {
     try {
       const res = await fetch(`/api/admin/members/${encodeURIComponent(realName)}`, {
@@ -227,7 +227,7 @@ export default function App() {
         setAdminBookings(prev => prev.filter(b => b.realName !== realName));
         setSelectedMember(null); // 返回名單
       } else {
-        alert('啨除失敗');
+        alert('刪除失敗');
       }
     } catch (err) {
       console.error(err);
@@ -507,7 +507,7 @@ export default function App() {
                   <div className="flex items-center gap-2">
                     {confirmDeleteMember ? (
                       <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3 py-1.5">
-                        <span className="text-xs font-medium text-rose-700">確定全喈除？無法復原！</span>
+                        <span className="text-xs font-medium text-rose-700">確定全刪除？無法復原！</span>
                         <button onClick={() => deleteAdminMember(selectedMember!)} className="text-xs bg-rose-600 text-white px-2 py-1 rounded-lg hover:bg-rose-700 transition-colors font-semibold">確定</button>
                         <button onClick={() => setConfirmDeleteMember(false)} className="text-xs text-stone-500 hover:text-stone-700 px-2 py-1 rounded-lg hover:bg-stone-100 transition-colors">取消</button>
                       </div>
@@ -517,7 +517,7 @@ export default function App() {
                         className="flex items-center gap-1 text-xs font-medium text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-3 py-1.5 rounded-lg transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        啨除所有紀錄
+                        刪除所有紀錄
                       </button>
                     )}
                     <button onClick={() => { setSelectedMember(null); setConfirmDeleteMember(false); }} className="text-sienna-600 bg-sienna-50 hover:bg-sienna-100 px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors font-medium text-sm md:text-base">返回名單</button>
@@ -574,11 +574,11 @@ export default function App() {
                                     </button>
                                   ))}
                                 </div>
-                                {/* 單筆啨除確認 */}
+                                {/* 單筆刪除確認 */}
                                 {confirmDeleteId === b.id ? (
                                   <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1.5">
                                     <span className="text-xs text-rose-700 font-medium">無法復原！</span>
-                                    <button onClick={() => deleteAdminBooking(b.id)} className="text-xs bg-rose-600 text-white px-2 py-1 rounded hover:bg-rose-700 font-semibold">全喈除</button>
+                                    <button onClick={() => deleteAdminBooking(b.id)} className="text-xs bg-rose-600 text-white px-2 py-1 rounded hover:bg-rose-700 font-semibold">確定刪除</button>
                                     <button onClick={() => setConfirmDeleteId(null)} className="text-xs text-stone-500 hover:text-stone-700 px-2 py-1 rounded hover:bg-stone-100">取消</button>
                                   </div>
                                 ) : (
@@ -587,7 +587,7 @@ export default function App() {
                                     className="flex items-center gap-1 text-xs text-rose-500 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 px-2 py-1.5 rounded-lg transition-colors"
                                   >
                                     <Trash2 className="w-3 h-3" />
-                                    啨除此筆
+                                    刪除此筆
                                   </button>
                                 )}
                               </div>
