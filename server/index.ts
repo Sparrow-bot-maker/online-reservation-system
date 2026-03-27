@@ -100,12 +100,13 @@ app.get('/api/bookings', async (req, res) => {
  * 新增預約，後端驗證日期範圍與容量
  */
 app.post('/api/bookings', async (req, res) => {
-  const { date, time, nickname, realName, specificTime } = req.body as {
+  const { date, time, nickname, realName, specificTime, isMorningTraining } = req.body as {
     date?: string;
     time?: string;
     nickname?: string;
     realName?: string;
     specificTime?: string;
+    isMorningTraining?: boolean;
   };
 
   // 欄位驗證
@@ -120,10 +121,13 @@ app.post('/api/bookings', async (req, res) => {
     res.status(400).json({ error: '預約日期必須在今天至三天後之間' });
     return;
   }
-  
-  // 清洗具體時間並做邊界驗證
+
+  // 清洗具體時間
   const sanitizedSpecificTime = sanitizeTime(specificTime);
-  if (!isSpecificTimeAllowed(time, sanitizedSpecificTime)) {
+
+  // 晨練時段（06:00 - 08:00）跳過主時段邊界驗證
+  const isFixedMorning = isMorningTraining || sanitizedSpecificTime === '06:00~08:00';
+  if (!isFixedMorning && !isSpecificTimeAllowed(time, sanitizedSpecificTime)) {
     res.status(400).json({ error: '您填寫的時間不在選擇的時段範圍內。' });
     return;
   }

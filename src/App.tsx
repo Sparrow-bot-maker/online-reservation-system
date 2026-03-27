@@ -16,6 +16,15 @@ const isWeekend = (dateString: string) => {
   return day === 0 || day === 6;
 };
 
+const isFriday = (dateString: string) => {
+  const d = new Date(dateString + 'T00:00:00Z');
+  return d.getUTCDay() === 5;
+};
+
+// 晨練固定時段常數
+const MORNING_TIME_SLOT = '06:00 - 08:00';
+const MORNING_SPECIFIC_TIME = '06:00~08:00';
+
 const getTimeSlots = (dateString: string) => {
   if (isWeekend(dateString)) {
     return [
@@ -86,6 +95,7 @@ export default function App() {
   const [formData, setFormData] = useState({ nickname: '', realName: '', specificTime: '' });
   const [timeError, setTimeError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [morningTraining, setMorningTraining] = useState(false);
 
   // ─── 時間處理工具 ───────────────────────────────────────────
   const sanitizeTime = (timeStr: string): string => {
@@ -303,14 +313,57 @@ export default function App() {
   // ─── 事件處理 ────────────────────────────────────────────────
 
   const handleBookClick = (date: string, time: string) => {
+    setMorningTraining(false);
     setBookingSlot({ date, time });
+    setShowModal(true);
+  };
+
+  const handleMorningTrainingClick = (date: string) => {
+    setMorningTraining(true);
+    setBookingSlot({ date, time: MORNING_TIME_SLOT });
+    setFormData({ nickname: '', realName: '', specificTime: MORNING_SPECIFIC_TIME });
+    setTimeError('');
     setShowModal(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bookingSlot || !formData.nickname || !formData.realName || !formData.specificTime) return;
+    if (!bookingSlot || !formData.nickname || !formData.realName) return;
 
+    // 晨練模式：跳過驗證，固定時段
+    if (morningTraining) {
+      setSubmitting(true);
+      try {
+        const res = await fetch('/api/bookings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date: bookingSlot.date,
+            time: MORNING_TIME_SLOT,
+            nickname: formData.nickname,
+            realName: formData.realName,
+            specificTime: MORNING_SPECIFIC_TIME,
+            isMorningTraining: true,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) { alert(data.error ?? '預約失敗，請重試'); return; }
+        setMyBookingIds((prev) => [...prev, data.id]);
+        await fetchBookings(selectedDate);
+        setFormData({ nickname: '', realName: '', specificTime: '' });
+        setShowModal(false);
+        setBookingSlot(null);
+        setMorningTraining(false);
+      } catch (err) {
+        alert('網路錯誤，請重試');
+        console.error(err);
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    if (!formData.specificTime) return;
     const sanitizedTime = sanitizeTime(formData.specificTime);
 
     // 時長驗證
@@ -686,18 +739,21 @@ export default function App() {
                   {dateObj.display}
                 </h3>
                 <div className="space-y-4">
-                  {getTimeSlots(dateObj.value).map((time) => {
+                  {Array.from(new Set(dateBookings.map(b => b.time)))
+                    .sort()
+                    .map((time) => {
                     const slotBookings = dateBookings.filter((b) => b.time === time);
                     if (slotBookings.length === 0) return null;
 
+                    const isMorningSlot = time === MORNING_TIME_SLOT;
                     return (
-                      <div key={time} className="bg-stone-50 rounded-xl p-4 border border-stone-100">
+                      <div key={time} className={`rounded-xl p-4 border ${isMorningSlot ? 'bg-amber-50 border-amber-200' : 'bg-stone-50 border-stone-100'}`}>
                         <div className="flex justify-between items-center mb-3">
                           <h4 className="font-semibold text-stone-800 flex items-center gap-2">
-                            <Clock className="w-4 h-4 text-sienna-600" />
-                            {time}
+                            <Clock className={`w-4 h-4 ${isMorningSlot ? 'text-amber-600' : 'text-sienna-600'}`} />
+                            {isMorningSlot ? '🌅 ' : ''}{time}
                           </h4>
-                          <span className="text-sm font-medium text-sienna-600 bg-sienna-100 px-2 py-1 rounded-md">
+                          <span className={`text-sm font-medium px-2 py-1 rounded-md ${isMorningSlot ? 'text-amber-700 bg-amber-100' : 'text-sienna-600 bg-sienna-100'}`}>
                             共 {slotBookings.length} 人
                           </span>
                         </div>
@@ -711,7 +767,7 @@ export default function App() {
                                 <p className="font-medium text-stone-800 truncate">{b.nickname}</p>
                                 <p className="text-xs text-stone-500 truncate">{b.realName}</p>
                                 {b.specificTime && (
-                                  <p className="text-xs text-sienna-600 truncate mt-0.5">⏱ {b.specificTime}</p>
+                                  <p className={`text-xs truncate mt-0.5 ${isMorningSlot ? 'text-amber-600' : 'text-sienna-600'}`}>⏱ {b.specificTime}</p>
                                 )}
                               </div>
                             </div>
@@ -774,6 +830,24 @@ export default function App() {
               <span className="ml-auto text-xs text-stone-400 animate-pulse">載入中…</span>
             )}
           </div>
+
+          {/* 週五晨練按鈕 */}
+          {isFriday(selectedDate) && (
+            <div className="mb-4 p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-amber-800 text-sm">🌅 週五固定晨練時段</p>
+                <p className="text-xs text-amber-600 mt-0.5">06:00 ~ 08:00 · 只需填寫姓名與綽號即可報名</p>
+              </div>
+              <button
+                onClick={() => handleMorningTrainingClick(selectedDate)}
+                disabled={loading}
+                className="shrink-0 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl shadow-sm shadow-amber-200 transition-colors text-sm disabled:opacity-60"
+              >
+                🏇 我要晨練
+              </button>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full">
             {getTimeSlots(selectedDate).map((time) => {
               const slotBookings = getSlotBookings(selectedDate, time);
@@ -900,9 +974,11 @@ export default function App() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="p-6 border-b border-stone-100 flex justify-between items-center">
-              <h3 className="text-xl font-semibold text-stone-800">填寫預約資料</h3>
+              <h3 className="text-xl font-semibold text-stone-800">
+                {morningTraining ? '🌅 報名週五晨練' : '填寫預約資料'}
+              </h3>
               <button
-                onClick={() => setShowModal(false)}
+                onClick={() => { setShowModal(false); setMorningTraining(false); }}
                 className="text-stone-400 hover:text-stone-600 p-1 rounded-full hover:bg-stone-100"
               >
                 <X className="w-5 h-5" />
@@ -910,15 +986,24 @@ export default function App() {
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <div className="bg-sienna-50 text-sienna-800 p-3 rounded-lg text-sm flex items-start gap-2 mb-6">
-                <CheckCircle2 className="w-5 h-5 shrink-0 text-sienna-600" />
-                <div>
-                  <p className="font-medium">您正在預約：</p>
-                  <p>
-                    {bookingSlot.date} {bookingSlot.time}
-                  </p>
+              {morningTraining ? (
+                <div className="bg-amber-50 text-amber-800 p-3 rounded-lg text-sm flex items-start gap-2 mb-4">
+                  <CheckCircle2 className="w-5 h-5 shrink-0 text-amber-600" />
+                  <div>
+                    <p className="font-bold">週五固定晨練</p>
+                    <p>{bookingSlot.date}　時段：06:00 ~ 08:00</p>
+                    <p className="text-xs text-amber-600 mt-1">只需填寫本名與綽號即可送出</p>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="bg-sienna-50 text-sienna-800 p-3 rounded-lg text-sm flex items-start gap-2 mb-6">
+                  <CheckCircle2 className="w-5 h-5 shrink-0 text-sienna-600" />
+                  <div>
+                    <p className="font-medium">您正在預約：</p>
+                    <p>{bookingSlot.date} {bookingSlot.time}</p>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <label htmlFor="nickname" className="block text-sm font-medium text-stone-700">
@@ -950,35 +1035,38 @@ export default function App() {
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label htmlFor="specificTime" className="block text-sm font-medium text-stone-700">
-                  具體預約時間 <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  id="specificTime"
-                  type="text"
-                  required
-                  value={formData.specificTime}
-                  onChange={(e) => {
-                    setFormData({ ...formData, specificTime: e.target.value });
-                    setTimeError('');
-                  }}
-                  className={`w-full px-4 py-2 rounded-xl border focus:ring-2 outline-none transition-all ${
-                    timeError
-                      ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-200'
-                      : 'border-stone-200 focus:border-sienna-500 focus:ring-sienna-200'
-                  }`}
-                  placeholder="例如：14:00~16:00"
-                />
-                {timeError && (
-                  <p className="text-xs text-rose-500 mt-1">{timeError}</p>
-                )}
-              </div>
+              {/* 一般加練才顯示具體時間欄位 */}
+              {!morningTraining && (
+                <div className="space-y-1.5">
+                  <label htmlFor="specificTime" className="block text-sm font-medium text-stone-700">
+                    具體預約時間 <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    id="specificTime"
+                    type="text"
+                    required
+                    value={formData.specificTime}
+                    onChange={(e) => {
+                      setFormData({ ...formData, specificTime: e.target.value });
+                      setTimeError('');
+                    }}
+                    className={`w-full px-4 py-2 rounded-xl border focus:ring-2 outline-none transition-all ${
+                      timeError
+                        ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-200'
+                        : 'border-stone-200 focus:border-sienna-500 focus:ring-sienna-200'
+                    }`}
+                    placeholder="例如：14:00~16:00"
+                  />
+                  {timeError && (
+                    <p className="text-xs text-rose-500 mt-1">{timeError}</p>
+                  )}
+                </div>
+              )}
 
               <div className="pt-4 flex gap-3">
                 <button
                   type="button"
-                  onClick={() => setShowModal(false)}
+                  onClick={() => { setShowModal(false); setMorningTraining(false); }}
                   className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 text-stone-600 font-medium hover:bg-stone-50 transition-colors"
                 >
                   取消
@@ -986,9 +1074,13 @@ export default function App() {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="flex-1 px-4 py-2.5 rounded-xl bg-sienna-600 text-white font-medium hover:bg-sienna-700 shadow-sm shadow-sienna-200 transition-colors disabled:opacity-60"
+                  className={`flex-1 px-4 py-2.5 rounded-xl font-medium shadow-sm transition-colors disabled:opacity-60 ${
+                    morningTraining
+                      ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200'
+                      : 'bg-sienna-600 hover:bg-sienna-700 text-white shadow-sienna-200'
+                  }`}
                 >
-                  {submitting ? '預約中…' : '確認上馬！'}
+                  {submitting ? '送出中…' : morningTraining ? '確認晨練報名！' : '確認上馬！'}
                 </button>
               </div>
             </form>
