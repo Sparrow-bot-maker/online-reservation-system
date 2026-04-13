@@ -29,8 +29,7 @@ const getTimeSlots = (dateString: string) => {
   if (isWeekend(dateString)) {
     return [
       '09:00 - 12:00',
-      '14:00 - 16:00',
-      '16:00 - 18:00',
+      '14:00 - 18:00',
     ];
   }
   return [
@@ -374,8 +373,8 @@ export default function App() {
 
     // 邊界驗證
     if (!isSpecificTimeAllowed(bookingSlot.time, sanitizedTime)) {
-      if (isWeekend(bookingSlot.date) && bookingSlot.time === '16:00 - 18:00') {
-        setTimeError('週末傍晚時段僅開放至 18:00，且預約需滿 2 小時。');
+      if (isWeekend(bookingSlot.date) && bookingSlot.time === '14:00 - 18:00') {
+        setTimeError('週末下午時段僅開放至 18:00，且預約需滿 2 小時。');
       } else {
         setTimeError('您填寫的時間不在選擇的時段範圍內。');
       }
