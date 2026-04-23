@@ -161,6 +161,7 @@ export default function App() {
   // 刪除確認 state
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmDeleteMember, setConfirmDeleteMember] = useState(false);
+  const [confirmClearAbsent, setConfirmClearAbsent] = useState(false);
 
   const calculateHours = (timeStr: string, actualTimeStr?: string) => {
     // 後台覆蓋時間優先；無覆蓋則用原始 specificTime
@@ -243,6 +244,27 @@ export default function App() {
       alert('網路錯誤');
     } finally {
       setConfirmDeleteMember(false);
+    }
+  };
+
+  // 清空所有未加練紀錄
+  const clearAbsentBookings = async () => {
+    try {
+      const res = await fetch('/api/admin/clear-absent', {
+        method: 'DELETE',
+        headers: { 'x-admin-password': adminPassword },
+      });
+      if (res.ok) {
+        setAdminBookings(prev => prev.filter(b => b.attendance_status !== 'absent'));
+        setSelectedMember(null);
+      } else {
+        alert('刪除失敗');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('網路錯誤');
+    } finally {
+      setConfirmClearAbsent(false);
     }
   };
 
@@ -535,16 +557,33 @@ export default function App() {
               </button>
             </div>
           </div>
-          <button
-            onClick={() => {
-              setIsAdminAuth(false);
-              setAdminBookings([]);
-              setAdminPassword('');
-            }}
-            className="text-sm font-medium text-stone-500 hover:text-stone-800 px-4 py-2 rounded-lg hover:bg-stone-100 transition-colors"
-          >
-            登出
-          </button>
+          <div className="flex items-center gap-2">
+            {confirmClearAbsent ? (
+              <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3 py-1.5 shrink-0">
+                <span className="text-xs font-medium text-rose-700">清空所有未加練？</span>
+                <button onClick={clearAbsentBookings} className="text-xs bg-rose-600 text-white px-2 py-1 rounded-lg hover:bg-rose-700 transition-colors font-semibold">確定</button>
+                <button onClick={() => setConfirmClearAbsent(false)} className="text-xs text-stone-500 hover:text-stone-700 px-2 py-1 rounded-lg hover:bg-stone-100 transition-colors">取消</button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmClearAbsent(true)}
+                className="flex items-center gap-1 text-sm font-medium text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-4 py-2 rounded-lg transition-colors border border-transparent hover:border-rose-200 shrink-0"
+              >
+                <Trash2 className="w-4 h-4" />
+                清空未加練
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setIsAdminAuth(false);
+                setAdminBookings([]);
+                setAdminPassword('');
+              }}
+              className="text-sm font-medium text-stone-500 hover:text-stone-800 px-4 py-2 rounded-lg hover:bg-stone-100 transition-colors shrink-0"
+            >
+              登出
+            </button>
+          </div>
         </div>
 
         {adminTab === 'members' ? (

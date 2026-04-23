@@ -246,6 +246,27 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
 });
 
 /**
+ * DELETE /api/admin/clear-absent
+ * Header: x-admin-password: <password>
+ * 管理員刪除所有未加練的預約紀錄
+ */
+app.delete('/api/admin/clear-absent', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+
+  try {
+    const result = await sql`DELETE FROM bookings WHERE attendance_status = 'absent' RETURNING id`;
+    res.json({ message: `已刪除 ${result.rowCount} 筆未加練紀錄`, deleted: result.rowCount });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫刪除錯誤' });
+  }
+});
+
+/**
  * DELETE /api/admin/bookings/:id
  * Header: x-admin-password: <password>
  * 管理員刪除單筆預約
