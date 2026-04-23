@@ -34,8 +34,7 @@ const getTimeSlots = (dateString: string) => {
   }
   return [
     '09:00 - 12:00',
-    '14:00 - 16:00',
-    '16:00 - 19:00',
+    '14:00 - 19:00',
   ];
 };
 
