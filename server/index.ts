@@ -83,6 +83,37 @@ function getTodayTW(): string {
   return tw.toISOString().split('T')[0];
 }
 
+/**
+ * 取得或自動建立今日 (台灣時間) 的 5 位數點名密碼
+ * 支援 Serverless 架構：每次存取時自動檢查是否跨日，確保密碼每日自動更新且一致
+ */
+async function getOrCreateDailyCheckinPassword(): Promise<string> {
+  const todayStr = getTodayTW();
+  const { rows } = await sql`
+    SELECT key, value FROM checkin_config WHERE key IN ('checkin_password', 'checkin_password_date')
+  `;
+  const pwdRow = rows.find((r) => r.key === 'checkin_password');
+  const dateRow = rows.find((r) => r.key === 'checkin_password_date');
+
+  // 若當前密碼不存在、不是 5 位數字、或記錄的日期不是今天，自動產生今天的 5 位數密碼
+  if (!pwdRow?.value || dateRow?.value !== todayStr || !/^\d{5}$/.test(pwdRow.value)) {
+    const newPwd = String(Math.floor(10000 + Math.random() * 90000));
+    await sql`
+      INSERT INTO checkin_config (key, value) VALUES ('checkin_password', ${newPwd})
+      ON CONFLICT (key) DO UPDATE SET value = ${newPwd}
+    `;
+    await sql`
+      INSERT INTO checkin_config (key, value) VALUES ('checkin_password_date', ${todayStr})
+      ON CONFLICT (key) DO UPDATE SET value = ${todayStr}
+    `;
+    // 同步觸發標記昨日 pending 為 absent
+    await autoMarkAbsent();
+    return newPwd;
+  }
+
+  return pwdRow.value;
+}
+
 /** 取得允許的日期清單（今天 ~ 今天+3 天，UTC+8） */
 function getAllowedDates(): string[] {
   const today = getTodayTW();
@@ -217,13 +248,10 @@ app.post('/api/bookings/:id/checkin', async (req, res) => {
   }
 
   try {
-    // 取得當前點名密碼
-    const { rows: configRows } = await sql`
-      SELECT value FROM checkin_config WHERE key = 'checkin_password'
-    `;
-    const currentPassword = configRows[0]?.value;
+    // 取得當前今日點名密碼
+    const currentPassword = await getOrCreateDailyCheckinPassword();
 
-    if (!currentPassword || checkinPassword !== currentPassword) {
+    if (!currentPassword || checkinPassword.trim() !== currentPassword.trim()) {
       res.status(401).json({ error: '點名密碼錯誤' });
       return;
     }
@@ -577,8 +605,8 @@ app.get('/api/admin/checkin-password', async (req, res) => {
     return;
   }
   try {
-    const { rows } = await sql`SELECT value FROM checkin_config WHERE key = 'checkin_password'`;
-    res.json({ checkinPassword: rows[0]?.value ?? '' });
+    const checkinPassword = await getOrCreateDailyCheckinPassword();
+    res.json({ checkinPassword });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '資料庫查詢錯誤' });
@@ -602,12 +630,18 @@ app.patch('/api/admin/checkin-password', async (req, res) => {
     res.status(400).json({ error: '請輸入新的點名密碼' });
     return;
   }
+  const todayStr = getTodayTW();
+  const trimmed = checkinPassword.trim();
   try {
     await sql`
-      INSERT INTO checkin_config (key, value) VALUES ('checkin_password', ${checkinPassword})
-      ON CONFLICT (key) DO UPDATE SET value = ${checkinPassword}
+      INSERT INTO checkin_config (key, value) VALUES ('checkin_password', ${trimmed})
+      ON CONFLICT (key) DO UPDATE SET value = ${trimmed}
     `;
-    res.json({ message: '點名密碼已更新' });
+    await sql`
+      INSERT INTO checkin_config (key, value) VALUES ('checkin_password_date', ${todayStr})
+      ON CONFLICT (key) DO UPDATE SET value = ${todayStr}
+    `;
+    res.json({ message: '點名密碼已更新', checkinPassword: trimmed });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '資料庫寫入錯誤' });

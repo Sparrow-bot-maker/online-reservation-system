@@ -529,14 +529,14 @@ export default function App() {
   // ─── 加練線上點名 ───────────────────────────────────────────
   const handleCheckin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!checkinBookingId) return;
+    if (!checkinBookingId || !checkinPassword.trim()) return;
     setCheckinLoading(true);
     setCheckinError('');
     try {
       const res = await fetch(`/api/bookings/${checkinBookingId}/checkin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ checkinPassword }),
+        body: JSON.stringify({ checkinPassword: checkinPassword.trim() }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -546,6 +546,8 @@ export default function App() {
       setCheckinSuccess(checkinBookingId);
       setCheckinBookingId(null);
       setCheckinPassword('');
+      // 即時重新整理當前畫面預約資料
+      fetchBookings(selectedDate);
     } catch (err) {
       setCheckinError('網路錯誤，請重試');
     } finally {
