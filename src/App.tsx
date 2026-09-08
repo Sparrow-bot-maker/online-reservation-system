@@ -1038,7 +1038,7 @@ export default function App() {
               <GraduationCap className="w-8 h-8 text-amber-200" />
             </div>
             <h2 className="text-2xl font-bold tracking-tight">馬術社課現場簽到</h2>
-            <p className="text-xs text-amber-200/80 mt-1">114-2 馬術社社團課</p>
+            <p className="text-xs text-amber-200/80 mt-1">馬術社社團課程</p>
           </div>
 
           <div className="p-6 md:p-8 space-y-6">
@@ -1817,7 +1817,7 @@ export default function App() {
                   />
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                  {Array.from(new Set(adminBookings.map((b) => b.realName)))
+                  {(Array.from(new Set(adminBookings.map((b) => b.realName))) as string[])
                     .filter((name) => name.includes(memberSearch))
                     .map((m) => (
                       <button
@@ -2478,8 +2478,8 @@ export default function App() {
       <div className="max-w-4xl mx-auto space-y-6 pt-12 md:pt-0 w-full">
         {/* Header */}
         <header className="text-center space-y-2 px-2 md:px-0">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-sienna-50 border border-sienna-200/60 rounded-full text-xs font-bold text-sienna-800 mb-1">
-            <span>🐎</span> 114-2 馬術社訓練預約與社課系統
+          <div className="inline-flex items-center gap-1.5 px-3.5 py-1 bg-sienna-50 border border-sienna-200/70 rounded-full text-xs font-bold text-sienna-800 mb-1 shadow-2xs">
+            <span>🐎</span> 馬術社訓練預約與社課系統
           </div>
           <h1 className="text-3xl md:text-4xl font-black text-stone-800 tracking-tight">
             {view === 'user'
@@ -2601,7 +2601,7 @@ export default function App() {
                   disabled={submitting}
                   className="flex-1 py-2.5 rounded-xl bg-sienna-600 text-white font-bold text-sm hover:bg-sienna-700 transition-colors shadow-sm disabled:opacity-60"
                 >
-                  {submitting ? '送出中…' : '確認預約！'}
+                  {submitting ? '送出預約中…' : morningTraining ? '確認晨練報名 🏇' : '確認預約上馬 🏇'}
                 </button>
               </div>
             </form>
@@ -2616,7 +2616,7 @@ export default function App() {
             <div className="flex justify-between items-center border-b border-stone-100 pb-3">
               <h3 className="font-bold text-stone-900 text-base flex items-center gap-1.5">
                 <ClipboardCheck className="w-5 h-5 text-emerald-600" />
-                加練現場點名
+                現場加練點名簽到
               </h3>
               <button
                 onClick={() => {
@@ -2630,7 +2630,7 @@ export default function App() {
               </button>
             </div>
             <form onSubmit={handleCheckin} className="space-y-4">
-              <p className="text-xs text-stone-500">請向現場教練索取今日 5 位數點名密碼</p>
+              <p className="text-xs text-stone-500">請向現場教練或幹部索取今日 5 位數點名密碼</p>
               <div>
                 <input
                   type="text"
