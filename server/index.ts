@@ -9,7 +9,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'admin123';
 // 啟動時初始化資料表
 initDb();
 
-// ─── 自動標記 absent（每分鐘檢查台灣時間是否跨日）────────────
+// ─── 自動標記 absent + 每日點名密碼（每分鐘檢查台灣時間是否跨日）──
 let lastAbsentDate = '';
 setInterval(async () => {
   const now = new Date();
@@ -18,6 +18,17 @@ setInterval(async () => {
   if (todayStr !== lastAbsentDate) {
     lastAbsentDate = todayStr;
     await autoMarkAbsent();
+    // 每日 00:00 自動產生新的 5 位數點名密碼
+    const newPwd = String(Math.floor(10000 + Math.random() * 90000));
+    try {
+      await sql`
+        INSERT INTO checkin_config (key, value) VALUES ('checkin_password', ${newPwd})
+        ON CONFLICT (key) DO UPDATE SET value = ${newPwd}
+      `;
+      console.log(`🔑 今日點名密碼已自動更新：${newPwd}`);
+    } catch (err) {
+      console.error('❌ 自動更新點名密碼失敗:', err);
+    }
   }
 }, 60_000);
 
@@ -247,6 +258,34 @@ app.post('/api/bookings/:id/checkin', async (req, res) => {
 });
 
 // ─── 社員 PIN API ─────────────────────────────────────────
+
+/**
+ * POST /api/member/register
+ * Body: { realName, pin }
+ * 社員首次自行設定：本名 + 學號(PIN)
+ * - 若本名已存在 → 409 (請直接登入)
+ * - 否則新增
+ */
+app.post('/api/member/register', async (req, res) => {
+  const { realName, pin } = req.body as { realName?: string; pin?: string };
+  if (!realName || !pin) {
+    res.status(400).json({ error: '請填寫本名與學號' });
+    return;
+  }
+  try {
+    // 檢查本名是否已存在
+    const { rows } = await sql`SELECT real_name FROM members WHERE real_name = ${realName}`;
+    if (rows.length > 0) {
+      res.status(409).json({ error: '此本名已完成設定，請直接用學號登入' });
+      return;
+    }
+    await sql`INSERT INTO members (real_name, pin) VALUES (${realName}, ${pin})`;
+    res.status(201).json({ message: '設定成功，歡迎 ' + realName, realName });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫寫入錯誤' });
+  }
+});
 
 /**
  * POST /api/member/login

@@ -213,8 +213,10 @@ export default function App() {
   const [confirmDeletePin, setConfirmDeletePin] = useState<string | null>(null);
 
   // Member view states
+  const [memberMode, setMemberMode] = useState<'login' | 'register'>('login'); // 首次設定 vs 登入
   const [memberPin, setMemberPin] = useState('');
   const [memberPinInput, setMemberPinInput] = useState('');
+  const [memberRegisterName, setMemberRegisterName] = useState(''); // 首次設定用的本名
   const [memberRealName, setMemberRealName] = useState('');
   const [memberRecords, setMemberRecords] = useState<MemberRecord[]>([]);
   const [memberLoginError, setMemberLoginError] = useState('');
@@ -468,6 +470,20 @@ export default function App() {
 
   // ─── 社員 PIN 登入與查詢 ─────────────────────────────────────
 
+  /** 共用：登入成功後拉統計 */
+  const loginWithPin = async (pin: string) => {
+    const statsRes = await fetch('/api/member/stats', {
+      headers: { 'x-member-pin': pin },
+    });
+    if (statsRes.ok) {
+      const statsData = await statsRes.json();
+      setMemberRealName(statsData.realName);
+      setMemberRecords(statsData.records);
+      setMemberPin(pin);
+    }
+  };
+
+  /** 登入（已設定過的社員，只輸入學號） */
   const handleMemberLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setMemberLoginError('');
@@ -480,20 +496,38 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setMemberLoginError(data.error ?? 'PIN 碼錯誤');
+        setMemberLoginError(data.error ?? '學號錯誤，請重試');
         return;
       }
-      // 登入成功，再拉統計
-      setMemberRealName(data.realName);
-      setMemberPin(memberPinInput);
-      const statsRes = await fetch('/api/member/stats', {
-        headers: { 'x-member-pin': memberPinInput },
-      });
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setMemberRecords(statsData.records);
-      }
+      await loginWithPin(memberPinInput);
       setMemberPinInput('');
+    } catch (err) {
+      setMemberLoginError('網路錯誤，請重試');
+    } finally {
+      setMemberLoading(false);
+    }
+  };
+
+  /** 首次設定（本名 + 學號）*/
+  const handleMemberRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMemberLoginError('');
+    setMemberLoading(true);
+    try {
+      const res = await fetch('/api/member/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ realName: memberRegisterName.trim(), pin: memberPinInput }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMemberLoginError(data.error ?? '設定失敗，請重試');
+        return;
+      }
+      // 設定成功，直接登入
+      await loginWithPin(memberPinInput);
+      setMemberPinInput('');
+      setMemberRegisterName('');
     } catch (err) {
       setMemberLoginError('網路錯誤，請重試');
     } finally {
@@ -506,7 +540,9 @@ export default function App() {
     setMemberRealName('');
     setMemberRecords([]);
     setMemberPinInput('');
+    setMemberRegisterName('');
     setMemberLoginError('');
+    setMemberMode('login');
   };
 
   // ─── 點名 ────────────────────────────────────────────────────
@@ -699,39 +735,103 @@ export default function App() {
 
   const renderMemberView = () => {
     if (!memberPin || !memberRealName) {
+      const isRegister = memberMode === 'register';
       return (
         <div className="w-full max-w-md mx-auto mt-12 bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
           <div className="flex flex-col items-center mb-6">
             <KeyRound className="w-12 h-12 text-sienna-600 mb-4" />
             <h2 className="text-2xl font-bold text-stone-800">我的加練紀錄</h2>
-            <p className="text-sm text-stone-500 mt-2">請輸入你的個人 PIN 碼查詢</p>
           </div>
-          <form onSubmit={handleMemberLogin} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">PIN 碼</label>
-              <div className="relative">
-                <Lock className="w-5 h-5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+
+          {/* 模式切換 tab */}
+          <div className="flex bg-stone-100 rounded-xl p-1 mb-6">
+            <button
+              type="button"
+              onClick={() => { setMemberMode('login'); setMemberLoginError(''); }}
+              className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${!isRegister ? 'bg-white text-sienna-700 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+            >
+              已設定過，直接登入
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMemberMode('register'); setMemberLoginError(''); }}
+              className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${isRegister ? 'bg-white text-sienna-700 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+            >
+              首次設定
+            </button>
+          </div>
+
+          {isRegister ? (
+            // ── 首次設定：本名 + 學號 ──
+            <form onSubmit={handleMemberRegister} className="space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+                📋 請填寫本名與學號，學號即為你之後的登入密碼，請妥善保管。
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">本名 <span className="text-rose-500">*</span></label>
                 <input
-                  type="password"
+                  type="text"
                   required
-                  value={memberPinInput}
-                  onChange={(e) => { setMemberPinInput(e.target.value); setMemberLoginError(''); }}
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all"
-                  placeholder="請輸入個人 PIN 碼"
+                  value={memberRegisterName}
+                  onChange={(e) => { setMemberRegisterName(e.target.value); setMemberLoginError(''); }}
+                  className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all"
+                  placeholder="請輸入真實本名"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">學號（將作為登入 PIN）<span className="text-rose-500">*</span></label>
+                <div className="relative">
+                  <Lock className="w-5 h-5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    required
+                    value={memberPinInput}
+                    onChange={(e) => { setMemberPinInput(e.target.value); setMemberLoginError(''); }}
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all font-mono"
+                    placeholder="請輸入學號"
+                  />
+                </div>
+              </div>
               {memberLoginError && (
-                <p className="text-xs text-rose-500 mt-1">{memberLoginError}</p>
+                <p className="text-xs text-rose-500">{memberLoginError}</p>
               )}
-            </div>
-            <button
-              type="submit"
-              disabled={memberLoading}
-              className="w-full py-2.5 bg-sienna-600 text-white rounded-xl font-medium hover:bg-sienna-700 transition-colors shadow-sm shadow-sienna-200 disabled:opacity-60"
-            >
-              {memberLoading ? '查詢中…' : '查詢我的紀錄'}
-            </button>
-          </form>
+              <button
+                type="submit"
+                disabled={memberLoading}
+                className="w-full py-2.5 bg-sienna-600 text-white rounded-xl font-medium hover:bg-sienna-700 transition-colors shadow-sm shadow-sienna-200 disabled:opacity-60"
+              >
+                {memberLoading ? '設定中…' : '完成設定並登入'}
+              </button>
+            </form>
+          ) : (
+            // ── 已設定過：只需學號 ──
+            <form onSubmit={handleMemberLogin} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">學號（PIN）</label>
+                <div className="relative">
+                  <Lock className="w-5 h-5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    required
+                    value={memberPinInput}
+                    onChange={(e) => { setMemberPinInput(e.target.value); setMemberLoginError(''); }}
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all font-mono"
+                    placeholder="請輸入學號"
+                  />
+                </div>
+                {memberLoginError && (
+                  <p className="text-xs text-rose-500 mt-1">{memberLoginError}</p>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={memberLoading}
+                className="w-full py-2.5 bg-sienna-600 text-white rounded-xl font-medium hover:bg-sienna-700 transition-colors shadow-sm shadow-sienna-200 disabled:opacity-60"
+              >
+                {memberLoading ? '登入中…' : '查詢我的紀錄'}
+              </button>
+            </form>
+          )}
         </div>
       );
     }
