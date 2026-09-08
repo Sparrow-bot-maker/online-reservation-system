@@ -98,6 +98,7 @@ const isFriday = (dateString: string) => {
 
 const MORNING_TIME_SLOT = '06:00 - 08:00';
 const MORNING_SPECIFIC_TIME = '06:00~08:00';
+const SHOW_MORNING_TRAINING = false; // 目前無晨練功能，前台暫時隱藏（功能與邏輯仍完整保留）
 
 const getTimeSlots = (dateString: string) => {
   if (isWeekend(dateString)) {
@@ -1189,7 +1190,7 @@ export default function App() {
                 !isRegister ? 'bg-white text-sienna-800 shadow-sm' : 'text-stone-500 hover:text-stone-800'
               }`}
             >
-              已綁定，直接登入
+              登入
             </button>
             <button
               type="button"
@@ -1485,55 +1486,55 @@ export default function App() {
     return (
       <div className="space-y-6 animate-in fade-in duration-300 w-full min-w-0">
         {/* Admin Navigation Bar */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-4 md:p-5 rounded-3xl shadow-sm border border-stone-200 gap-4">
-          <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto pb-1 md:pb-0">
+        <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center bg-white p-4 md:p-5 rounded-3xl shadow-sm border border-stone-200 gap-3.5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 bg-stone-100/80 p-1.5 rounded-2xl border border-stone-200/50 w-full md:w-auto">
             <button
               onClick={() => setAdminTab('overview')}
-              className={`px-3.5 py-2 font-bold rounded-xl text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-1.5 ${
+              className={`px-3 py-2.5 font-bold rounded-xl text-xs md:text-sm transition-all flex items-center justify-center gap-1.5 ${
                 adminTab === 'overview'
-                  ? 'bg-sienna-600 text-white shadow-sm'
-                  : 'text-stone-600 hover:bg-stone-100'
+                  ? 'bg-white text-sienna-800 shadow-sm'
+                  : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
               }`}
             >
-              <Calendar className="w-4 h-4" />
+              <Calendar className="w-4 h-4 text-sienna-600" />
               預約總覽
             </button>
             <button
               onClick={() => setAdminTab('members')}
-              className={`px-3.5 py-2 font-bold rounded-xl text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-1.5 ${
+              className={`px-3 py-2.5 font-bold rounded-xl text-xs md:text-sm transition-all flex items-center justify-center gap-1.5 ${
                 adminTab === 'members'
-                  ? 'bg-sienna-600 text-white shadow-sm'
-                  : 'text-stone-600 hover:bg-stone-100'
+                  ? 'bg-white text-sienna-800 shadow-sm'
+                  : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
               }`}
             >
-              <User className="w-4 h-4" />
+              <User className="w-4 h-4 text-sienna-600" />
               成員名冊
             </button>
             <button
               onClick={() => setAdminTab('classes')}
-              className={`px-3.5 py-2 font-bold rounded-xl text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-1.5 ${
+              className={`px-3 py-2.5 font-bold rounded-xl text-xs md:text-sm transition-all flex items-center justify-center gap-1.5 ${
                 adminTab === 'classes'
-                  ? 'bg-sienna-600 text-white shadow-sm'
-                  : 'text-stone-600 hover:bg-stone-100'
+                  ? 'bg-white text-sienna-800 shadow-sm'
+                  : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
               }`}
             >
-              <GraduationCap className="w-4 h-4" />
-              社課管理 (QR Code)
+              <GraduationCap className="w-4 h-4 text-emerald-600" />
+              社課 QR Code
             </button>
             <button
               onClick={() => setAdminTab('settings')}
-              className={`px-3.5 py-2 font-bold rounded-xl text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-1.5 ${
+              className={`px-3 py-2.5 font-bold rounded-xl text-xs md:text-sm transition-all flex items-center justify-center gap-1.5 ${
                 adminTab === 'settings'
-                  ? 'bg-sienna-600 text-white shadow-sm'
-                  : 'text-stone-600 hover:bg-stone-100'
+                  ? 'bg-white text-sienna-800 shadow-sm'
+                  : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
               }`}
             >
-              <Settings className="w-4 h-4" />
+              <Settings className="w-4 h-4 text-stone-600" />
               設定與 PIN
             </button>
           </div>
 
-          <div className="flex items-center gap-2 self-end md:self-auto">
+          <div className="flex items-center justify-end gap-2 shrink-0 pt-1 md:pt-0 border-t md:border-t-0 border-stone-100">
             {adminTab === 'overview' && (
               confirmClearAbsent ? (
                 <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 rounded-xl px-2.5 py-1">
@@ -1554,7 +1555,7 @@ export default function App() {
               ) : (
                 <button
                   onClick={() => setConfirmClearAbsent(true)}
-                  className="flex items-center gap-1 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-xl border border-rose-200/60 transition-colors"
+                  className="flex items-center gap-1 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-xl border border-rose-200/60 transition-colors"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   清空未加練
@@ -1567,7 +1568,7 @@ export default function App() {
                 setAdminBookings([]);
                 setAdminPassword('');
               }}
-              className="text-xs font-medium text-stone-500 hover:text-stone-800 px-3 py-1.5 rounded-xl hover:bg-stone-100 transition-colors"
+              className="text-xs font-medium text-stone-500 hover:text-stone-800 px-3 py-2 rounded-xl hover:bg-stone-100 transition-colors border border-stone-200"
             >
               登出
             </button>
@@ -1576,7 +1577,7 @@ export default function App() {
 
         {/* Tab 1: 預約總覽 */}
         {adminTab === 'overview' && (
-          <div className="space-y-6">
+          <div key="overview" className="space-y-6 animate-in fade-in zoom-in-[0.99] duration-150">
             {dates.map((dateObj) => {
               const dateBookings = byDate[dateObj.value] ?? [];
               if (dateBookings.length === 0) return null;
@@ -1684,7 +1685,7 @@ export default function App() {
 
         {/* Tab 2: 成員名冊 */}
         {adminTab === 'members' && (
-          <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
+          <div key="members" className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 animate-in fade-in zoom-in-[0.99] duration-150">
             {selectedMember ? (
               <div className="space-y-6">
                 <div className="flex justify-between items-center border-b border-stone-100 pb-4">
@@ -1837,7 +1838,7 @@ export default function App() {
 
         {/* Tab 3: 社課管理 (QR Code) */}
         {adminTab === 'classes' && (
-          <div className="space-y-6">
+          <div key="classes" className="space-y-6 animate-in fade-in zoom-in-[0.99] duration-150">
             {/* 建立社課場次表單 */}
             <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
               <h3 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
@@ -1948,7 +1949,7 @@ export default function App() {
 
         {/* Tab 4: 系統設定與 PIN */}
         {adminTab === 'settings' && (
-          <div className="space-y-6">
+          <div key="settings" className="space-y-6 animate-in fade-in zoom-in-[0.99] duration-150">
             {/* 每日點名密碼 */}
             <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
               <h3 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
@@ -2232,8 +2233,8 @@ export default function App() {
                 )}
               </div>
 
-              {/* 週五晨練專區 */}
-              {isFriday(selectedDate) && (
+              {/* 週五晨練專區 (功能保留，前台預設隱藏) */}
+              {SHOW_MORNING_TRAINING && isFriday(selectedDate) && (
                 <div className="mb-4 p-4 md:p-5 bg-gradient-to-r from-amber-50 to-amber-100/50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center gap-3.5 shadow-2xs">
                   <div className="flex-1 min-w-0">
                     <p className="font-black text-amber-900 text-sm md:text-base flex items-center gap-1.5">
@@ -2249,7 +2250,7 @@ export default function App() {
                     disabled={loading}
                     className="shrink-0 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl shadow-sm transition-colors text-sm disabled:opacity-60"
                   >
-                    🏇 我要晨練
+                    🏇 報名週五晨練
                   </button>
                 </div>
               )}
