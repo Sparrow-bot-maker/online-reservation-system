@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Calendar, Clock, User, X, CheckCircle2, AlertCircle, Shield, Lock, Trash2 } from 'lucide-react';
+import { Calendar, Clock, User, X, CheckCircle2, AlertCircle, Shield, Lock, Trash2, ClipboardCheck, KeyRound, Settings } from 'lucide-react';
 
 type Booking = {
   id: string;
@@ -9,6 +9,20 @@ type Booking = {
 };
 
 type AdminBooking = Booking & { realName: string; specificTime: string; actualTime?: string; attendance_status?: string; note?: string };
+
+type MemberRecord = {
+  id: string;
+  date: string;
+  time: string;
+  nickname: string;
+  specificTime: string;
+  actualTime?: string;
+};
+
+type MemberPin = {
+  realName: string;
+  pin: string;
+};
 
 const isWeekend = (dateString: string) => {
   const d = new Date(dateString + 'T00:00:00Z');
@@ -54,6 +68,13 @@ const generateDates = () => {
   return dates;
 };
 
+/** 取得台灣今日日期（前端用） */
+function getTodayTW(): string {
+  const now = new Date();
+  const tw = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  return tw.toISOString().split('T')[0];
+}
+
 export default function App() {
   const [dates, setDates] = useState(generateDates());
   const [selectedDate, setSelectedDate] = useState(() => generateDates()[0].value);
@@ -64,7 +85,6 @@ export default function App() {
       const newDates = generateDates();
       setDates((prev) => {
         if (prev[0].value !== newDates[0].value) {
-          // 跨日了，重置選中日期到新的今天
           setSelectedDate(newDates[0].value);
           return newDates;
         }
@@ -74,8 +94,8 @@ export default function App() {
     const timer = setInterval(check, 60_000);
     return () => clearInterval(timer);
   }, []);
+
   const [bookings, setBookings] = useState<Booking[]>([]);
-  // 所有日期我的預約（用於側欄跨日期顯示）
   const [myBookings, setMyBookings] = useState<Booking[]>([]);
   const [myBookingIds, setMyBookingIds] = useState<string[]>(() => {
     try {
@@ -85,7 +105,6 @@ export default function App() {
     }
   });
   const [loading, setLoading] = useState(false);
-  // inline 取消確認
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
 
   const [showModal, setShowModal] = useState(false);
@@ -94,6 +113,13 @@ export default function App() {
   const [timeError, setTimeError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [morningTraining, setMorningTraining] = useState(false);
+
+  // ─── 點名 Modal states ─────────────────────────────────────
+  const [checkinBookingId, setCheckinBookingId] = useState<string | null>(null);
+  const [checkinPassword, setCheckinPassword] = useState('');
+  const [checkinLoading, setCheckinLoading] = useState(false);
+  const [checkinError, setCheckinError] = useState('');
+  const [checkinSuccess, setCheckinSuccess] = useState<string | null>(null); // 已點名的 booking id
 
   // ─── 時間處理工具 ───────────────────────────────────────────
   const sanitizeTime = (timeStr: string): string => {
@@ -134,7 +160,6 @@ export default function App() {
   };
 
   const validateDuration = (sanitizedValue: string): boolean => {
-    // 支援格式此時已清洗為：14:00~16:00
     const match = sanitizedValue.match(/^(\d{2}):(\d{2})~(\d{2}):(\d{2})$/);
     if (!match) return false;
     const [, sh, sm, eh, em] = match.map(Number);
@@ -146,24 +171,7 @@ export default function App() {
     return end - start >= 120;
   };
 
-  // Admin states
-  const [view, setView] = useState<'user' | 'admin'>('user');
-  const [isAdminAuth, setIsAdminAuth] = useState(false);
-  const [adminPassword, setAdminPassword] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
-  const [adminBookings, setAdminBookings] = useState<AdminBooking[]>([]);
-  
-  // Admin Members View states
-  const [adminTab, setAdminTab] = useState<'overview' | 'members'>('overview');
-  const [memberSearch, setMemberSearch] = useState('');
-  const [selectedMember, setSelectedMember] = useState<string | null>(null);
-  // 刪除確認 state
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [confirmDeleteMember, setConfirmDeleteMember] = useState(false);
-  const [confirmClearAbsent, setConfirmClearAbsent] = useState(false);
-
   const calculateHours = (timeStr: string, actualTimeStr?: string) => {
-    // 後台覆蓋時間優先；無覆蓋則用原始 specificTime
     const target = actualTimeStr || timeStr;
     try {
       if (!target) return 0;
@@ -178,6 +186,41 @@ export default function App() {
       return 0;
     }
   };
+
+  // Admin states
+  const [view, setView] = useState<'user' | 'admin' | 'member'>('user');
+  const [isAdminAuth, setIsAdminAuth] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [adminBookings, setAdminBookings] = useState<AdminBooking[]>([]);
+  
+  // Admin Members View states
+  const [adminTab, setAdminTab] = useState<'overview' | 'members' | 'settings'>('overview');
+  const [memberSearch, setMemberSearch] = useState('');
+  const [selectedMember, setSelectedMember] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteMember, setConfirmDeleteMember] = useState(false);
+  const [confirmClearAbsent, setConfirmClearAbsent] = useState(false);
+
+  // Admin settings states
+  const [memberPins, setMemberPins] = useState<MemberPin[]>([]);
+  const [newPinName, setNewPinName] = useState('');
+  const [newPinCode, setNewPinCode] = useState('');
+  const [pinSubmitting, setPinSubmitting] = useState(false);
+  const [checkinPwdDisplay, setCheckinPwdDisplay] = useState('');
+  const [newCheckinPwd, setNewCheckinPwd] = useState('');
+  const [checkinPwdSubmitting, setCheckinPwdSubmitting] = useState(false);
+  const [confirmDeletePin, setConfirmDeletePin] = useState<string | null>(null);
+
+  // Member view states
+  const [memberPin, setMemberPin] = useState('');
+  const [memberPinInput, setMemberPinInput] = useState('');
+  const [memberRealName, setMemberRealName] = useState('');
+  const [memberRecords, setMemberRecords] = useState<MemberRecord[]>([]);
+  const [memberLoginError, setMemberLoginError] = useState('');
+  const [memberLoading, setMemberLoading] = useState(false);
+
+  // ─── 管理員 Admin functions ──────────────────────────────────
 
   const updateAdminBooking = async (id: string, updates: { attendance_status?: string; note?: string; actual_time?: string }) => {
     try {
@@ -200,7 +243,6 @@ export default function App() {
     }
   };
 
-  // 刪除單筆預約（管理員）
   const deleteAdminBooking = async (id: string) => {
     try {
       const res = await fetch(`/api/admin/bookings/${id}`, {
@@ -210,7 +252,6 @@ export default function App() {
       if (res.ok) {
         const remaining = adminBookings.filter(b => b.id !== id);
         setAdminBookings(remaining);
-        // 若該成員已無任何紀錄，自動返回名單
         if (selectedMember && remaining.filter(b => b.realName === selectedMember).length === 0) {
           setSelectedMember(null);
         }
@@ -225,7 +266,6 @@ export default function App() {
     }
   };
 
-  // 刪除成員所有紀錄
   const deleteAdminMember = async (realName: string) => {
     try {
       const res = await fetch(`/api/admin/members/${encodeURIComponent(realName)}`, {
@@ -234,7 +274,7 @@ export default function App() {
       });
       if (res.ok) {
         setAdminBookings(prev => prev.filter(b => b.realName !== realName));
-        setSelectedMember(null); // 返回名單
+        setSelectedMember(null);
       } else {
         alert('刪除失敗');
       }
@@ -246,7 +286,6 @@ export default function App() {
     }
   };
 
-  // 清空所有未加練紀錄
   const clearAbsentBookings = async () => {
     try {
       const res = await fetch('/api/admin/clear-absent', {
@@ -267,11 +306,110 @@ export default function App() {
     }
   };
 
+  // ─── 管理員：設定 tab ─────────────────────────────────────
+
+  const fetchMemberPins = useCallback(async (pwd: string) => {
+    try {
+      const res = await fetch('/api/admin/member-pins', {
+        headers: { 'x-admin-password': pwd },
+      });
+      if (res.ok) setMemberPins(await res.json());
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
+
+  const fetchCheckinPassword = useCallback(async (pwd: string) => {
+    try {
+      const res = await fetch('/api/admin/checkin-password', {
+        headers: { 'x-admin-password': pwd },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCheckinPwdDisplay(data.checkinPassword);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (adminTab === 'settings' && isAdminAuth) {
+      fetchMemberPins(adminPassword);
+      fetchCheckinPassword(adminPassword);
+    }
+  }, [adminTab, isAdminAuth, adminPassword, fetchMemberPins, fetchCheckinPassword]);
+
+  const handleAddPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPinName.trim() || !newPinCode.trim()) return;
+    setPinSubmitting(true);
+    try {
+      const res = await fetch('/api/admin/member-pins', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
+        body: JSON.stringify({ realName: newPinName.trim(), pin: newPinCode.trim() }),
+      });
+      if (res.ok) {
+        setNewPinName('');
+        setNewPinCode('');
+        await fetchMemberPins(adminPassword);
+      } else {
+        alert('新增失敗');
+      }
+    } catch (err) {
+      alert('網路錯誤');
+    } finally {
+      setPinSubmitting(false);
+    }
+  };
+
+  const handleDeletePin = async (realName: string) => {
+    try {
+      const res = await fetch(`/api/admin/member-pins/${encodeURIComponent(realName)}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-password': adminPassword },
+      });
+      if (res.ok) {
+        setMemberPins(prev => prev.filter(m => m.realName !== realName));
+      } else {
+        alert('刪除失敗');
+      }
+    } catch (err) {
+      alert('網路錯誤');
+    } finally {
+      setConfirmDeletePin(null);
+    }
+  };
+
+  const handleUpdateCheckinPwd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCheckinPwd.trim()) return;
+    setCheckinPwdSubmitting(true);
+    try {
+      const res = await fetch('/api/admin/checkin-password', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
+        body: JSON.stringify({ checkinPassword: newCheckinPwd.trim() }),
+      });
+      if (res.ok) {
+        setCheckinPwdDisplay(newCheckinPwd.trim());
+        setNewCheckinPwd('');
+        alert('點名密碼已更新！');
+      } else {
+        alert('更新失敗');
+      }
+    } catch (err) {
+      alert('網路錯誤');
+    } finally {
+      setCheckinPwdSubmitting(false);
+    }
+  };
+
   // ─── 儲存「我的預約 id」到 localStorage ─────────────────────
   useEffect(() => {
     localStorage.setItem('app_my_booking_ids', JSON.stringify(myBookingIds));
   }, [myBookingIds]);
-
 
   // ─── 取得選定日期的預約（時段顯示用）───────────────────────
   const fetchBookings = useCallback(async (date: string) => {
@@ -289,7 +427,6 @@ export default function App() {
   // ─── 取得「我的預約」橫跨所有日期 ─────────────────────────
   const fetchMyBookings = useCallback(async (ids: string[]) => {
     if (ids.length === 0) { setMyBookings([]); return; }
-    // 查所有開放日期的預約，過濾出自己的 id
     try {
       const allDates = generateDates().map(d => d.value);
       const results = await Promise.all(
@@ -302,7 +439,6 @@ export default function App() {
     }
   }, []);
 
-  // 當 myBookingIds 變動時重新拉側欄
   useEffect(() => {
     fetchMyBookings(myBookingIds);
   }, [myBookingIds, fetchMyBookings]);
@@ -330,6 +466,78 @@ export default function App() {
     }
   }, []);
 
+  // ─── 社員 PIN 登入與查詢 ─────────────────────────────────────
+
+  const handleMemberLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMemberLoginError('');
+    setMemberLoading(true);
+    try {
+      const res = await fetch('/api/member/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: memberPinInput }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMemberLoginError(data.error ?? 'PIN 碼錯誤');
+        return;
+      }
+      // 登入成功，再拉統計
+      setMemberRealName(data.realName);
+      setMemberPin(memberPinInput);
+      const statsRes = await fetch('/api/member/stats', {
+        headers: { 'x-member-pin': memberPinInput },
+      });
+      if (statsRes.ok) {
+        const statsData = await statsRes.json();
+        setMemberRecords(statsData.records);
+      }
+      setMemberPinInput('');
+    } catch (err) {
+      setMemberLoginError('網路錯誤，請重試');
+    } finally {
+      setMemberLoading(false);
+    }
+  };
+
+  const handleMemberLogout = () => {
+    setMemberPin('');
+    setMemberRealName('');
+    setMemberRecords([]);
+    setMemberPinInput('');
+    setMemberLoginError('');
+  };
+
+  // ─── 點名 ────────────────────────────────────────────────────
+
+  const handleCheckin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!checkinBookingId) return;
+    setCheckinLoading(true);
+    setCheckinError('');
+    try {
+      const res = await fetch(`/api/bookings/${checkinBookingId}/checkin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checkinPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCheckinError(data.error ?? '點名失敗');
+        return;
+      }
+      // 點名成功
+      setCheckinSuccess(checkinBookingId);
+      setCheckinBookingId(null);
+      setCheckinPassword('');
+    } catch (err) {
+      setCheckinError('網路錯誤，請重試');
+    } finally {
+      setCheckinLoading(false);
+    }
+  };
+
   // ─── 事件處理 ────────────────────────────────────────────────
 
   const handleBookClick = (date: string, time: string) => {
@@ -350,7 +558,6 @@ export default function App() {
     e.preventDefault();
     if (!bookingSlot || !formData.nickname || !formData.realName) return;
 
-    // 晨練模式：跳過驗證，固定時段
     if (morningTraining) {
       setSubmitting(true);
       try {
@@ -386,13 +593,11 @@ export default function App() {
     if (!formData.specificTime) return;
     const sanitizedTime = sanitizeTime(formData.specificTime);
 
-    // 時長驗證
     if (!validateDuration(sanitizedTime)) {
       setTimeError('加練時間需至少 2 小時，格式請填如：14:00~16:00');
       return;
     }
 
-    // 邊界驗證
     if (!isSpecificTimeAllowed(bookingSlot.time, sanitizedTime)) {
       if (isWeekend(bookingSlot.date) && bookingSlot.time === '14:00 - 18:00') {
         setTimeError('週末下午時段僅開放至 18:00，且預約需滿 2 小時。');
@@ -440,7 +645,6 @@ export default function App() {
   };
 
   const handleCancel = async (id: string) => {
-    // 使用 inline 確認，避免 window.confirm 被瀏覽器攔截
     setConfirmCancelId(id);
   };
 
@@ -457,7 +661,6 @@ export default function App() {
       }
       const newIds = myBookingIds.filter((myId) => myId !== id);
       setMyBookingIds(newIds);
-      // 同步刷新時段名額與側欄
       await Promise.all([fetchBookings(selectedDate), fetchMyBookings(newIds)]);
     } catch (err) {
       alert('網路錯誤，請重試');
@@ -468,7 +671,6 @@ export default function App() {
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     const pwd = passwordInput;
-    // 先嘗試用這組密碼向後端驗證
     try {
       const res = await fetch('/api/admin/bookings', {
         headers: { 'x-admin-password': pwd },
@@ -492,6 +694,113 @@ export default function App() {
 
   const getSlotBookings = (date: string, time: string) =>
     bookings.filter((b) => b.date === date && b.time === time);
+
+  // ─── Member 視圖 ──────────────────────────────────────────────
+
+  const renderMemberView = () => {
+    if (!memberPin || !memberRealName) {
+      return (
+        <div className="w-full max-w-md mx-auto mt-12 bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
+          <div className="flex flex-col items-center mb-6">
+            <KeyRound className="w-12 h-12 text-sienna-600 mb-4" />
+            <h2 className="text-2xl font-bold text-stone-800">我的加練紀錄</h2>
+            <p className="text-sm text-stone-500 mt-2">請輸入你的個人 PIN 碼查詢</p>
+          </div>
+          <form onSubmit={handleMemberLogin} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-stone-700 mb-1">PIN 碼</label>
+              <div className="relative">
+                <Lock className="w-5 h-5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="password"
+                  required
+                  value={memberPinInput}
+                  onChange={(e) => { setMemberPinInput(e.target.value); setMemberLoginError(''); }}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all"
+                  placeholder="請輸入個人 PIN 碼"
+                />
+              </div>
+              {memberLoginError && (
+                <p className="text-xs text-rose-500 mt-1">{memberLoginError}</p>
+              )}
+            </div>
+            <button
+              type="submit"
+              disabled={memberLoading}
+              className="w-full py-2.5 bg-sienna-600 text-white rounded-xl font-medium hover:bg-sienna-700 transition-colors shadow-sm shadow-sienna-200 disabled:opacity-60"
+            >
+              {memberLoading ? '查詢中…' : '查詢我的紀錄'}
+            </button>
+          </form>
+        </div>
+      );
+    }
+
+    const totalHours = memberRecords.reduce((sum, r) => sum + calculateHours(r.specificTime, r.actualTime), 0);
+
+    return (
+      <div className="w-full max-w-2xl mx-auto space-y-6 animate-in fade-in duration-300">
+        <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <User className="w-6 h-6 text-sienna-600" />
+            <div>
+              <p className="font-bold text-stone-800 text-lg">{memberRealName}</p>
+              <p className="text-sm text-stone-500">個人加練紀錄</p>
+            </div>
+          </div>
+          <button
+            onClick={handleMemberLogout}
+            className="text-sm font-medium text-stone-500 hover:text-stone-800 px-4 py-2 rounded-lg hover:bg-stone-100 transition-colors"
+          >
+            登出
+          </button>
+        </div>
+
+        {/* 統計卡 */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="bg-white p-5 rounded-3xl shadow-sm border border-stone-200 text-center">
+            <p className="text-sm text-stone-500 mb-1">總加練次數</p>
+            <p className="text-3xl font-bold text-stone-800">{memberRecords.length} <span className="text-lg font-normal text-stone-500">次</span></p>
+          </div>
+          <div className="bg-white p-5 rounded-3xl shadow-sm border border-stone-200 text-center">
+            <p className="text-sm text-stone-500 mb-1">總加練時數</p>
+            <p className="text-3xl font-bold text-sienna-700">{totalHours} <span className="text-lg font-normal text-stone-500">小時</span></p>
+          </div>
+        </div>
+
+        {/* 歷史紀錄 */}
+        <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
+          <h3 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
+            <ClipboardCheck className="w-5 h-5 text-sienna-600" />
+            已完成加練紀錄
+          </h3>
+          {memberRecords.length === 0 ? (
+            <p className="text-center text-stone-400 py-8">目前還沒有已完成的加練紀錄</p>
+          ) : (
+            <div className="space-y-3">
+              {memberRecords.map(r => (
+                <div key={r.id} className="flex items-center justify-between bg-stone-50 rounded-xl p-3 border border-stone-100">
+                  <div>
+                    <p className="font-medium text-stone-800">{r.date}</p>
+                    <p className="text-sm text-stone-500">{r.time}</p>
+                    {r.actualTime ? (
+                      <p className="text-xs text-amber-600 mt-0.5">✏️ {r.actualTime} <span className="text-stone-400 line-through">{r.specificTime}</span></p>
+                    ) : (
+                      r.specificTime && <p className="text-xs text-sienna-600 mt-0.5">⏱ {r.specificTime}</p>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xl font-bold text-sienna-700">{calculateHours(r.specificTime, r.actualTime)}</p>
+                    <p className="text-xs text-stone-400">小時</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   // ─── Admin 視圖 ──────────────────────────────────────────────
 
@@ -541,18 +850,24 @@ export default function App() {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 overflow-hidden gap-4">
           <div className="flex items-center gap-3">
             <Shield className="w-6 h-6 text-sienna-600" />
-            <div className="flex gap-2">
+            <div className="flex gap-2 overflow-x-auto">
               <button 
                 onClick={() => setAdminTab('overview')}
-                className={`px-4 py-2 font-bold rounded-xl transition-colors ${adminTab === 'overview' ? 'bg-sienna-100 text-sienna-700' : 'text-stone-500 hover:bg-stone-100'}`}
+                className={`px-4 py-2 font-bold rounded-xl transition-colors whitespace-nowrap ${adminTab === 'overview' ? 'bg-sienna-100 text-sienna-700' : 'text-stone-500 hover:bg-stone-100'}`}
               >
                 預約總覽
               </button>
               <button 
                 onClick={() => setAdminTab('members')}
-                className={`px-4 py-2 font-bold rounded-xl transition-colors ${adminTab === 'members' ? 'bg-sienna-100 text-sienna-700' : 'text-stone-500 hover:bg-stone-100'}`}
+                className={`px-4 py-2 font-bold rounded-xl transition-colors whitespace-nowrap ${adminTab === 'members' ? 'bg-sienna-100 text-sienna-700' : 'text-stone-500 hover:bg-stone-100'}`}
               >
                 成員名冊
+              </button>
+              <button 
+                onClick={() => setAdminTab('settings')}
+                className={`px-4 py-2 font-bold rounded-xl transition-colors whitespace-nowrap ${adminTab === 'settings' ? 'bg-sienna-100 text-sienna-700' : 'text-stone-500 hover:bg-stone-100'}`}
+              >
+                <span className="flex items-center gap-1"><Settings className="w-4 h-4" />設定</span>
               </button>
             </div>
           </div>
@@ -577,6 +892,7 @@ export default function App() {
                 setIsAdminAuth(false);
                 setAdminBookings([]);
                 setAdminPassword('');
+                setAdminTab('overview');
               }}
               className="text-sm font-medium text-stone-500 hover:text-stone-800 px-4 py-2 rounded-lg hover:bg-stone-100 transition-colors shrink-0"
             >
@@ -585,7 +901,95 @@ export default function App() {
           </div>
         </div>
 
-        {adminTab === 'members' ? (
+        {adminTab === 'settings' ? (
+          <div className="space-y-6">
+            {/* 點名密碼 */}
+            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
+              <h3 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
+                <ClipboardCheck className="w-5 h-5 text-sienna-600" />
+                點名密碼管理
+              </h3>
+              <div className="bg-stone-50 rounded-xl p-4 mb-4 flex items-center gap-3">
+                <span className="text-sm text-stone-500">目前點名密碼：</span>
+                <span className="font-bold text-lg text-sienna-700 font-mono tracking-widest">{checkinPwdDisplay || '—'}</span>
+              </div>
+              <form onSubmit={handleUpdateCheckinPwd} className="flex gap-3">
+                <input
+                  type="text"
+                  value={newCheckinPwd}
+                  onChange={(e) => setNewCheckinPwd(e.target.value)}
+                  placeholder="輸入新的點名密碼"
+                  className="flex-1 px-4 py-2 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all text-sm"
+                />
+                <button
+                  type="submit"
+                  disabled={checkinPwdSubmitting || !newCheckinPwd.trim()}
+                  className="px-5 py-2 bg-sienna-600 text-white rounded-xl font-medium hover:bg-sienna-700 transition-colors text-sm disabled:opacity-60"
+                >
+                  更新
+                </button>
+              </form>
+              <p className="text-xs text-stone-400 mt-2">建議每天上課前更換，教練現場報出後社員即可點名</p>
+            </div>
+
+            {/* 社員 PIN 管理 */}
+            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
+              <h3 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-sienna-600" />
+                社員 PIN 管理
+              </h3>
+              <form onSubmit={handleAddPin} className="flex gap-2 mb-4 flex-wrap">
+                <input
+                  type="text"
+                  value={newPinName}
+                  onChange={(e) => setNewPinName(e.target.value)}
+                  placeholder="本名"
+                  className="flex-1 min-w-24 px-3 py-2 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all text-sm"
+                />
+                <input
+                  type="text"
+                  value={newPinCode}
+                  onChange={(e) => setNewPinCode(e.target.value)}
+                  placeholder="PIN 碼"
+                  className="w-32 px-3 py-2 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all text-sm font-mono"
+                />
+                <button
+                  type="submit"
+                  disabled={pinSubmitting || !newPinName.trim() || !newPinCode.trim()}
+                  className="px-4 py-2 bg-sienna-600 text-white rounded-xl font-medium hover:bg-sienna-700 transition-colors text-sm disabled:opacity-60 whitespace-nowrap"
+                >
+                  {pinSubmitting ? '儲存中…' : '新增 / 更新'}
+                </button>
+              </form>
+              <div className="space-y-2">
+                {memberPins.length === 0 && (
+                  <p className="text-stone-400 text-sm text-center py-4">尚無社員 PIN 資料</p>
+                )}
+                {memberPins.map(m => (
+                  <div key={m.realName} className="flex items-center justify-between bg-stone-50 rounded-xl px-4 py-2.5 border border-stone-100">
+                    <div className="flex items-center gap-3">
+                      <User className="w-4 h-4 text-stone-400" />
+                      <span className="font-medium text-stone-800">{m.realName}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-sm text-sienna-700 bg-sienna-50 px-2 py-0.5 rounded-lg">{m.pin}</span>
+                      {confirmDeletePin === m.realName ? (
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => handleDeletePin(m.realName)} className="text-xs bg-rose-600 text-white px-2 py-1 rounded-lg hover:bg-rose-700 font-semibold">確定</button>
+                          <button onClick={() => setConfirmDeletePin(null)} className="text-xs text-stone-500 px-2 py-1 rounded-lg hover:bg-stone-100">取消</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setConfirmDeletePin(m.realName)} className="text-stone-400 hover:text-rose-500 transition-colors">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : adminTab === 'members' ? (
           <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
             {selectedMember ? (
               <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
@@ -664,7 +1068,6 @@ export default function App() {
                                     </button>
                                   ))}
                                 </div>
-                                {/* 單筆刪除確認 */}
                                 {confirmDeleteId === b.id ? (
                                   <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1.5">
                                     <span className="text-xs text-rose-700 font-medium">無法復原！</span>
@@ -764,74 +1167,81 @@ export default function App() {
             )}
           </div>
         ) : (
+          <div className="space-y-6">
+            {dates.map((dateObj) => {
+              const dateBookings = byDate[dateObj.value] ?? [];
+              if (dateBookings.length === 0) return null;
 
-        <div className="space-y-6">
-          {dates.map((dateObj) => {
-            const dateBookings = byDate[dateObj.value] ?? [];
-            if (dateBookings.length === 0) return null;
+              return (
+                <div key={dateObj.value} className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
+                  <h3 className="text-xl font-bold text-sienna-700 mb-4 border-b border-stone-100 pb-3">
+                    {dateObj.display}
+                  </h3>
+                  <div className="space-y-4">
+                    {Array.from(new Set(dateBookings.map(b => b.time)))
+                      .sort()
+                      .map((time) => {
+                      const slotBookings = dateBookings.filter((b) => b.time === time);
+                      if (slotBookings.length === 0) return null;
 
-            return (
-              <div key={dateObj.value} className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
-                <h3 className="text-xl font-bold text-sienna-700 mb-4 border-b border-stone-100 pb-3">
-                  {dateObj.display}
-                </h3>
-                <div className="space-y-4">
-                  {Array.from(new Set(dateBookings.map(b => b.time)))
-                    .sort()
-                    .map((time) => {
-                    const slotBookings = dateBookings.filter((b) => b.time === time);
-                    if (slotBookings.length === 0) return null;
-
-                    const isMorningSlot = time === MORNING_TIME_SLOT;
-                    return (
-                      <div key={time} className={`rounded-xl p-4 border ${isMorningSlot ? 'bg-amber-50 border-amber-200' : 'bg-stone-50 border-stone-100'}`}>
-                        <div className="flex justify-between items-center mb-3">
-                          <h4 className="font-semibold text-stone-800 flex items-center gap-2">
-                            <Clock className={`w-4 h-4 ${isMorningSlot ? 'text-amber-600' : 'text-sienna-600'}`} />
-                            {isMorningSlot ? '🌅 ' : ''}{time}
-                          </h4>
-                          <span className={`text-sm font-medium px-2 py-1 rounded-md ${isMorningSlot ? 'text-amber-700 bg-amber-100' : 'text-sienna-600 bg-sienna-100'}`}>
-                            共 {slotBookings.length} 人
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                          {slotBookings.map((b, idx) => (
-                            <div key={b.id} className="flex items-center gap-3 bg-white p-3 rounded-lg border border-stone-200 shadow-sm">
-                              <span className="w-6 h-6 shrink-0 rounded-full bg-stone-100 text-stone-600 flex items-center justify-center text-xs font-bold">
-                                {idx + 1}
-                              </span>
-                              <div className="min-w-0">
-                                <p className="font-medium text-stone-800 truncate">{b.nickname}</p>
-                                <p className="text-xs text-stone-500 truncate">{b.realName}</p>
-                                {b.specificTime && (
-                                  <p className={`text-xs truncate mt-0.5 ${isMorningSlot ? 'text-amber-600' : 'text-sienna-600'}`}>⏱ {b.specificTime}</p>
-                                )}
+                      const isMorningSlot = time === MORNING_TIME_SLOT;
+                      return (
+                        <div key={time} className={`rounded-xl p-4 border ${isMorningSlot ? 'bg-amber-50 border-amber-200' : 'bg-stone-50 border-stone-100'}`}>
+                          <div className="flex justify-between items-center mb-3">
+                            <h4 className="font-semibold text-stone-800 flex items-center gap-2">
+                              <Clock className={`w-4 h-4 ${isMorningSlot ? 'text-amber-600' : 'text-sienna-600'}`} />
+                              {isMorningSlot ? '🌅 ' : ''}{time}
+                            </h4>
+                            <span className={`text-sm font-medium px-2 py-1 rounded-md ${isMorningSlot ? 'text-amber-700 bg-amber-100' : 'text-sienna-600 bg-sienna-100'}`}>
+                              共 {slotBookings.length} 人
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                            {slotBookings.map((b, idx) => (
+                              <div key={b.id} className="flex items-center gap-3 bg-white p-3 rounded-lg border border-stone-200 shadow-sm">
+                                <span className="w-6 h-6 shrink-0 rounded-full bg-stone-100 text-stone-600 flex items-center justify-center text-xs font-bold">
+                                  {idx + 1}
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="font-medium text-stone-800 truncate">{b.nickname}</p>
+                                  <p className="text-xs text-stone-500 truncate">{b.realName}</p>
+                                  {b.specificTime && (
+                                    <p className={`text-xs truncate mt-0.5 ${isMorningSlot ? 'text-amber-600' : 'text-sienna-600'}`}>⏱ {b.specificTime}</p>
+                                  )}
+                                  <span className={`text-xs font-semibold ${
+                                    b.attendance_status === 'attended' ? 'text-emerald-600' :
+                                    b.attendance_status === 'absent' ? 'text-rose-500' : 'text-stone-400'
+                                  }`}>
+                                    {b.attendance_status === 'attended' ? '✅ 已點名' : b.attendance_status === 'absent' ? '❌ 未加練' : '⏳ 待確認'}
+                                  </span>
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
 
-          {adminBookings.length === 0 && (
-            <div className="text-center py-16 text-stone-500 bg-white rounded-3xl border border-stone-200 shadow-sm">
-              <Calendar className="w-12 h-12 mx-auto mb-3 text-stone-300" />
-              <p className="text-lg font-medium text-stone-600">目前沒有任何預約紀錄</p>
-            </div>
-          )}
-          <div className="text-center mt-8 text-stone-400 text-sm">今日訓練辛苦了！記得檢查馬匹狀況與裝備歸位唷。🐎</div>
-        </div>
+            {adminBookings.length === 0 && (
+              <div className="text-center py-16 text-stone-500 bg-white rounded-3xl border border-stone-200 shadow-sm">
+                <Calendar className="w-12 h-12 mx-auto mb-3 text-stone-300" />
+                <p className="text-lg font-medium text-stone-600">目前沒有任何預約紀錄</p>
+              </div>
+            )}
+            <div className="text-center mt-8 text-stone-400 text-sm">今日訓練辛苦了！記得檢查馬匹狀況與裝備歸位唷。🐎</div>
+          </div>
         )}
       </div>
     );
   };
 
   // ─── User 視圖 ───────────────────────────────────────────────
+
+  const today = getTodayTW();
 
   const renderUserView = () => (
     <div className="grid md:grid-cols-3 gap-8 animate-in fade-in duration-300 w-full">
@@ -925,45 +1335,68 @@ export default function App() {
             </div>
           ) : (
             <div className="space-y-3">
-              {myBookings.map((booking) => (
-                <div key={booking.id} className="rounded-xl border border-stone-100 bg-stone-50 overflow-hidden">
-                  {confirmCancelId === booking.id ? (
-                    <div className="p-3">
-                      <p className="text-sm font-medium text-stone-700 mb-2">確定取消此預約？</p>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={confirmCancel}
-                          className="flex-1 py-1.5 rounded-lg bg-rose-500 text-white text-sm font-medium hover:bg-rose-600 transition-colors"
-                        >
-                          確定取消
-                        </button>
-                        <button
-                          onClick={() => setConfirmCancelId(null)}
-                          className="flex-1 py-1.5 rounded-lg border border-stone-200 text-stone-600 text-sm hover:bg-stone-100 transition-colors"
-                        >
-                          保留
-                        </button>
+              {myBookings.map((booking) => {
+                const isToday = booking.date === today;
+                const alreadyCheckedIn = checkinSuccess === booking.id;
+                return (
+                  <div key={booking.id} className="rounded-xl border border-stone-100 bg-stone-50 overflow-hidden">
+                    {confirmCancelId === booking.id ? (
+                      <div className="p-3">
+                        <p className="text-sm font-medium text-stone-700 mb-2">確定取消此預約？</p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={confirmCancel}
+                            className="flex-1 py-1.5 rounded-lg bg-rose-500 text-white text-sm font-medium hover:bg-rose-600 transition-colors"
+                          >
+                            確定取消
+                          </button>
+                          <button
+                            onClick={() => setConfirmCancelId(null)}
+                            className="flex-1 py-1.5 rounded-lg border border-stone-200 text-stone-600 text-sm hover:bg-stone-100 transition-colors"
+                          >
+                            保留
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="p-3 relative group">
-                      <div className="pr-8">
-                        <p className="font-medium text-stone-800">{booking.date}</p>
-                        <p className="text-sm text-stone-600">{booking.time}</p>
-                        <p className="text-xs text-stone-500 mt-1">{booking.nickname}</p>
+                    ) : (
+                      <div className="p-3 relative group">
+                        <div className="pr-8">
+                          <p className="font-medium text-stone-800">{booking.date}</p>
+                          <p className="text-sm text-stone-600">{booking.time}</p>
+                          <p className="text-xs text-stone-500 mt-1">{booking.nickname}</p>
+                        </div>
+                        <button
+                          id={`cancel-btn-${booking.id}`}
+                          onClick={() => handleCancel(booking.id)}
+                          className="absolute top-3 right-3 p-1.5 text-stone-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
+                          title="取消預約"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                        {/* 今日點名按鈕 */}
+                        {isToday && (
+                          <div className="mt-2">
+                            {alreadyCheckedIn ? (
+                              <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                已點名成功！
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => { setCheckinBookingId(booking.id); setCheckinError(''); setCheckinPassword(''); }}
+                                className="flex items-center gap-1.5 text-xs font-semibold text-white bg-emerald-500 hover:bg-emerald-600 px-3 py-1.5 rounded-lg transition-colors"
+                              >
+                                <ClipboardCheck className="w-3.5 h-3.5" />
+                                🏁 點名
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <button
-                        id={`cancel-btn-${booking.id}`}
-                        onClick={() => handleCancel(booking.id)}
-                        className="absolute top-3 right-3 p-1.5 text-stone-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
-                        title="取消預約"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -975,35 +1408,48 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-stone-50 text-stone-900 font-sans p-4 md:p-8 relative w-full overflow-x-hidden max-w-[100vw]">
-      {/* View Toggle Button */}
-      <button
-        onClick={() => setView(view === 'user' ? 'admin' : 'user')}
-        className="absolute top-4 right-4 md:top-8 md:right-8 flex items-center gap-2 px-4 py-2 bg-white border border-stone-200 text-stone-700 rounded-xl text-sm font-medium hover:bg-stone-50 hover:text-sienna-600 transition-colors shadow-sm z-10"
-      >
-        {view === 'user' ? (
-          <>
-            <Shield className="w-4 h-4" />
-            <span>管理員</span>
-          </>
-        ) : (
-          <>
-            <User className="w-4 h-4" />
-            <span>返回預約</span>
-          </>
-        )}
-      </button>
+      {/* View Toggle Buttons */}
+      <div className="absolute top-4 right-4 md:top-8 md:right-8 flex items-center gap-2 z-10">
+        <button
+          onClick={() => setView(view === 'member' ? 'user' : 'member')}
+          className={`flex items-center gap-2 px-4 py-2 border text-sm font-medium rounded-xl transition-colors shadow-sm ${
+            view === 'member'
+              ? 'bg-sienna-600 text-white border-sienna-600'
+              : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-50 hover:text-sienna-600'
+          }`}
+        >
+          <KeyRound className="w-4 h-4" />
+          <span className="hidden sm:inline">{view === 'member' ? '返回預約' : '我的紀錄'}</span>
+        </button>
+        <button
+          onClick={() => setView(view === 'user' ? 'admin' : 'user')}
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-stone-200 text-stone-700 rounded-xl text-sm font-medium hover:bg-stone-50 hover:text-sienna-600 transition-colors shadow-sm"
+        >
+          {view === 'user' ? (
+            <>
+              <Shield className="w-4 h-4" />
+              <span className="hidden sm:inline">管理員</span>
+            </>
+          ) : (
+            <>
+              <User className="w-4 h-4" />
+              <span className="hidden sm:inline">返回預約</span>
+            </>
+          )}
+        </button>
+      </div>
 
       <div className="max-w-4xl mx-auto space-y-8 pt-12 md:pt-0 w-full">
         <header className="text-center space-y-2 px-2 md:px-0">
           <h1 className="text-3xl md:text-4xl font-bold text-stone-800 tracking-tight">
-            {view === 'user' ? '114-2 馬術社加練預約系統' : '管理員後台'}
+            {view === 'user' ? '114-2 馬術社加練預約系統' : view === 'admin' ? '管理員後台' : '個人加練紀錄'}
           </h1>
           <p className="text-stone-500">
-            {view === 'user' ? '免登入即可預約，開放今日起四天內之時段' : '檢視與管理所有預約紀錄'}
+            {view === 'user' ? '免登入即可預約，開放今日起四天內之時段' : view === 'admin' ? '檢視與管理所有預約紀錄' : '輸入 PIN 碼查詢你的加練歷程'}
           </p>
         </header>
 
-        {view === 'user' ? renderUserView() : renderAdminView()}
+        {view === 'user' ? renderUserView() : view === 'admin' ? renderAdminView() : renderMemberView()}
       </div>
 
       {/* Booking Modal */}
@@ -1118,6 +1564,60 @@ export default function App() {
                   }`}
                 >
                   {submitting ? '送出中…' : morningTraining ? '確認晨練報名！' : '確認上馬！'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 點名 Modal */}
+      {checkinBookingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-stone-100 flex justify-between items-center">
+              <h3 className="text-xl font-semibold text-stone-800 flex items-center gap-2">
+                <ClipboardCheck className="w-5 h-5 text-emerald-600" />
+                線上點名
+              </h3>
+              <button
+                onClick={() => { setCheckinBookingId(null); setCheckinPassword(''); setCheckinError(''); }}
+                className="text-stone-400 hover:text-stone-600 p-1 rounded-full hover:bg-stone-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleCheckin} className="p-6 space-y-4">
+              <p className="text-sm text-stone-500">請向教練索取今日點名密碼並輸入</p>
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">點名密碼</label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={checkinPassword}
+                  onChange={(e) => { setCheckinPassword(e.target.value); setCheckinError(''); }}
+                  className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none transition-all font-mono tracking-widest text-center text-lg"
+                  placeholder="輸入點名密碼"
+                />
+                {checkinError && (
+                  <p className="text-xs text-rose-500 mt-1">{checkinError}</p>
+                )}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setCheckinBookingId(null); setCheckinPassword(''); setCheckinError(''); }}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 text-stone-600 font-medium hover:bg-stone-50 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={checkinLoading || !checkinPassword}
+                  className="flex-1 px-4 py-2.5 rounded-xl font-medium bg-emerald-500 hover:bg-emerald-600 text-white transition-colors disabled:opacity-60"
+                >
+                  {checkinLoading ? '點名中…' : '確認點名'}
                 </button>
               </div>
             </form>

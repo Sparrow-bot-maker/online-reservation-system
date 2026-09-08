@@ -1,5 +1,5 @@
 import express from 'express';
-import sql, { initDb } from './db.js';
+import sql, { initDb, autoMarkAbsent } from './db.js';
 
 const app = express();
 app.use(express.json());
@@ -9,7 +9,19 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'admin123';
 // 啟動時初始化資料表
 initDb();
 
-// ─── 工具函式 ──────────────────────────────────────────────
+// ─── 自動標記 absent（每分鐘檢查台灣時間是否跨日）────────────
+let lastAbsentDate = '';
+setInterval(async () => {
+  const now = new Date();
+  const tw = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const todayStr = tw.toISOString().split('T')[0];
+  if (todayStr !== lastAbsentDate) {
+    lastAbsentDate = todayStr;
+    await autoMarkAbsent();
+  }
+}, 60_000);
+
+// ─── 工具函式 ──────────────────────────────────────────────────
 
 /** 時間字串清洗 */
 function sanitizeTime(timeStr: string): string {
@@ -177,6 +189,130 @@ app.delete('/api/bookings/:id', async (req, res) => {
   }
 });
 
+// ─── 線上點名 API ─────────────────────────────────────────
+
+/**
+ * POST /api/bookings/:id/checkin
+ * Body: { checkinPassword }
+ * 社員輸入點名密碼，當天預約才能點名，attendance_status 改為 attended
+ */
+app.post('/api/bookings/:id/checkin', async (req, res) => {
+  const { id } = req.params;
+  const { checkinPassword } = req.body as { checkinPassword?: string };
+
+  if (!checkinPassword) {
+    res.status(400).json({ error: '請輸入點名密碼' });
+    return;
+  }
+
+  try {
+    // 取得當前點名密碼
+    const { rows: configRows } = await sql`
+      SELECT value FROM checkin_config WHERE key = 'checkin_password'
+    `;
+    const currentPassword = configRows[0]?.value;
+
+    if (!currentPassword || checkinPassword !== currentPassword) {
+      res.status(401).json({ error: '點名密碼錯誤' });
+      return;
+    }
+
+    // 驗證預約存在且是今天
+    const today = getTodayTW();
+    const { rows } = await sql`
+      SELECT id, date, attendance_status FROM bookings WHERE id = ${id}
+    `;
+    if (rows.length === 0) {
+      res.status(404).json({ error: '找不到此預約' });
+      return;
+    }
+    const booking = rows[0];
+    if (booking.date !== today) {
+      res.status(400).json({ error: '只能對今天的預約進行點名' });
+      return;
+    }
+    if (booking.attendance_status === 'attended') {
+      res.status(400).json({ error: '此預約已完成點名' });
+      return;
+    }
+
+    await sql`
+      UPDATE bookings SET attendance_status = 'attended' WHERE id = ${id}
+    `;
+    res.json({ message: '點名成功！' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫錯誤' });
+  }
+});
+
+// ─── 社員 PIN API ─────────────────────────────────────────
+
+/**
+ * POST /api/member/login
+ * Body: { pin }
+ * 驗證 PIN，回傳 realName
+ */
+app.post('/api/member/login', async (req, res) => {
+  const { pin } = req.body as { pin?: string };
+  if (!pin) {
+    res.status(400).json({ error: '請輸入 PIN 碼' });
+    return;
+  }
+
+  try {
+    const { rows } = await sql`
+      SELECT real_name as "realName" FROM members WHERE pin = ${pin}
+    `;
+    if (rows.length === 0) {
+      res.status(401).json({ error: 'PIN 碼錯誤' });
+      return;
+    }
+    res.json({ realName: rows[0].realName });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫錯誤' });
+  }
+});
+
+/**
+ * GET /api/member/stats
+ * Header: x-member-pin: <pin>
+ * 回傳該社員所有 attended 紀錄與總加練時數
+ */
+app.get('/api/member/stats', async (req, res) => {
+  const pin = req.headers['x-member-pin'] as string | undefined;
+  if (!pin) {
+    res.status(400).json({ error: '缺少 x-member-pin' });
+    return;
+  }
+
+  try {
+    // 先用 PIN 找 realName
+    const { rows: memberRows } = await sql`
+      SELECT real_name as "realName" FROM members WHERE pin = ${pin}
+    `;
+    if (memberRows.length === 0) {
+      res.status(401).json({ error: 'PIN 碼錯誤' });
+      return;
+    }
+    const realName = memberRows[0].realName;
+
+    // 查詢 attended 紀錄（不返回 realName，只返回統計與日期/時段）
+    const { rows } = await sql`
+      SELECT id, date, time, nickname, specific_time as "specificTime", actual_time as "actualTime"
+      FROM bookings
+      WHERE real_name = ${realName}
+        AND attendance_status = 'attended'
+      ORDER BY date DESC
+    `;
+    res.json({ realName, records: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫查詢錯誤' });
+  }
+});
+
 // ─── 管理員 API ────────────────────────────────────────────
 
 /**
@@ -311,6 +447,131 @@ app.delete('/api/admin/members/:realName', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '資料庫刪除錯誤' });
+  }
+});
+
+// ─── 管理員：社員 PIN 管理 ─────────────────────────────────
+
+/**
+ * GET /api/admin/member-pins
+ * Header: x-admin-password
+ * 查看所有社員 PIN
+ */
+app.get('/api/admin/member-pins', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+  try {
+    const { rows } = await sql`
+      SELECT real_name as "realName", pin, created_at as "createdAt" FROM members ORDER BY real_name
+    `;
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫查詢錯誤' });
+  }
+});
+
+/**
+ * POST /api/admin/member-pins
+ * Header: x-admin-password
+ * Body: { realName, pin }
+ * 新增社員 PIN
+ */
+app.post('/api/admin/member-pins', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+  const { realName, pin } = req.body as { realName?: string; pin?: string };
+  if (!realName || !pin) {
+    res.status(400).json({ error: '請填寫本名與 PIN 碼' });
+    return;
+  }
+  try {
+    await sql`
+      INSERT INTO members (real_name, pin) VALUES (${realName}, ${pin})
+      ON CONFLICT (real_name) DO UPDATE SET pin = ${pin}
+    `;
+    res.status(201).json({ message: '社員 PIN 已設定' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫寫入錯誤' });
+  }
+});
+
+/**
+ * DELETE /api/admin/member-pins/:realName
+ * Header: x-admin-password
+ * 刪除社員 PIN（不影響預約紀錄）
+ */
+app.delete('/api/admin/member-pins/:realName', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+  const { realName } = req.params;
+  try {
+    await sql`DELETE FROM members WHERE real_name = ${realName}`;
+    res.json({ message: '已刪除' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫刪除錯誤' });
+  }
+});
+
+// ─── 管理員：點名密碼管理 ─────────────────────────────────
+
+/**
+ * GET /api/admin/checkin-password
+ * Header: x-admin-password
+ * 取得當前點名密碼
+ */
+app.get('/api/admin/checkin-password', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+  try {
+    const { rows } = await sql`SELECT value FROM checkin_config WHERE key = 'checkin_password'`;
+    res.json({ checkinPassword: rows[0]?.value ?? '' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫查詢錯誤' });
+  }
+});
+
+/**
+ * PATCH /api/admin/checkin-password
+ * Header: x-admin-password
+ * Body: { checkinPassword }
+ * 更新點名密碼
+ */
+app.patch('/api/admin/checkin-password', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+  const { checkinPassword } = req.body as { checkinPassword?: string };
+  if (!checkinPassword) {
+    res.status(400).json({ error: '請輸入新的點名密碼' });
+    return;
+  }
+  try {
+    await sql`
+      INSERT INTO checkin_config (key, value) VALUES ('checkin_password', ${checkinPassword})
+      ON CONFLICT (key) DO UPDATE SET value = ${checkinPassword}
+    `;
+    res.json({ message: '點名密碼已更新' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫寫入錯誤' });
   }
 });
 
