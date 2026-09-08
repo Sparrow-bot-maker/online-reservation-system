@@ -590,6 +590,27 @@ app.delete('/api/admin/member-pins/:realName', async (req, res) => {
     res.status(500).json({ error: '資料庫刪除錯誤' });
   }
 });
+/**
+ * DELETE /api/admin/clear-all-data
+ * Header: x-admin-password
+ * 學期末一鍵清空所有成員名冊、加練預約與社課出席紀錄
+ */
+app.delete('/api/admin/clear-all-data', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+  try {
+    await sql`DELETE FROM class_attendance`;
+    await sql`DELETE FROM bookings`;
+    await sql`DELETE FROM members`;
+    res.json({ message: '本學期所有成員名冊、加練預約與社課出席紀錄已全數清空！' });
+  } catch (err) {
+    console.error('清空資料失敗:', err);
+    res.status(500).json({ error: '資料庫清空錯誤' });
+  }
+});
 
 // ─── 管理員：點名密碼管理 ─────────────────────────────────
 

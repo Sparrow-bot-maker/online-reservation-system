@@ -253,7 +253,7 @@ export default function App() {
     return end - start >= 120;
   };
 
-  const calculateHours = (timeStr: string, actualTimeStr?: string) => {
+  const calculateHours = (timeStr: string, actualTimeStr?: string): number => {
     const target = actualTimeStr || timeStr;
     try {
       if (!target) return 0;
@@ -263,10 +263,17 @@ export default function App() {
       const [, sh, sm, eh, em] = match.map(Number);
       let durationMs = eh * 60 + em - (sh * 60 + sm);
       if (durationMs < 0) durationMs += 24 * 60;
-      return durationMs / 60;
+      const rawHours = durationMs / 60;
+      // 無條件進位至小數點後第二位 (例: 12.3333 -> 12.34)
+      return Math.ceil(rawHours * 100) / 100;
     } catch {
       return 0;
     }
+  };
+
+  const formatHours = (hours: number): string => {
+    const rounded = Math.ceil(hours * 100) / 100;
+    return rounded.toString();
   };
 
   // ─── 管理員 States ──────────────────────────────────────────
@@ -299,6 +306,10 @@ export default function App() {
   const [activeQrSession, setActiveQrSession] = useState<ClassSession | null>(null);
   const [activeAttendeesSession, setActiveAttendeesSession] = useState<ClassSession | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+  // 學期結算清空 State
+  const [showClearAllModal, setShowClearAllModal] = useState(false);
+  const [clearAllConfirmText, setClearAllConfirmText] = useState('');
+  const [clearingAll, setClearingAll] = useState(false);
 
   // ─── 社員個人紀錄 States ────────────────────────────────────
   const [memberMode, setMemberMode] = useState<'login' | 'register'>('login');
@@ -420,8 +431,12 @@ export default function App() {
 
   useEffect(() => {
     if (isAdminAuth) {
-      if (adminTab === 'overview' || adminTab === 'members') {
+      if (adminTab === 'overview') {
         fetchAdminBookings(adminPassword);
+      } else if (adminTab === 'members') {
+        fetchAdminBookings(adminPassword);
+        fetchMemberPins(adminPassword);
+        fetchAdminClasses(adminPassword);
       } else if (adminTab === 'classes') {
         fetchAdminClasses(adminPassword);
       } else if (adminTab === 'settings') {
@@ -430,6 +445,34 @@ export default function App() {
       }
     }
   }, [adminTab, isAdminAuth, adminPassword, fetchAdminBookings, fetchAdminClasses, fetchMemberPins, fetchCheckinPassword]);
+
+  // 學期末一鍵清空所有資料
+  const handleClearAllSemesterData = async () => {
+    if (clearAllConfirmText.trim() !== '確認清空') return;
+    setClearingAll(true);
+    try {
+      const res = await fetch('/api/admin/clear-all-data', {
+        method: 'DELETE',
+        headers: { 'x-admin-password': adminPassword },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setAdminBookings([]);
+        setMemberPins([]);
+        setAdminClassSessions([]);
+        setSelectedMember(null);
+        setShowClearAllModal(false);
+        setClearAllConfirmText('');
+        alert(data.message ?? '學期資料已成功重置清空！');
+      } else {
+        alert(data.error ?? '清空失敗');
+      }
+    } catch (err) {
+      alert('網路連線錯誤');
+    } finally {
+      setClearingAll(false);
+    }
+  };
 
   // ─── 社員登入與查詢 ─────────────────────────────────────────
   const loginWithPin = useCallback(async (pin: string) => {
@@ -1687,21 +1730,39 @@ export default function App() {
 
         {/* Tab 2: 成員名冊 */}
         {adminTab === 'members' && (
-          <div key="members" className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 animate-in fade-in zoom-in-[0.99] duration-150">
+          <div key="members" className="space-y-6 animate-in fade-in zoom-in-[0.99] duration-150">
             {selectedMember ? (
-              <div className="space-y-6">
-                <div className="flex justify-between items-center border-b border-stone-100 pb-4">
-                  <h3 className="text-xl font-bold text-stone-800 flex items-center gap-2">
-                    <User className="w-5 h-5 text-sienna-600" />
-                    {selectedMember} 的個別加練紀錄
-                  </h3>
+              <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-6">
+                {/* 成員詳細 Header */}
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-stone-100 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-sienna-100 text-sienna-800 flex items-center justify-center font-black text-xl shadow-inner">
+                      {selectedMember.slice(0, 1)}
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-stone-900 flex items-center gap-2">
+                        {selectedMember}
+                        {memberPins.find((p) => p.realName === selectedMember) ? (
+                          <span className="text-xs font-mono font-bold bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-lg">
+                            學號 PIN: {memberPins.find((p) => p.realName === selectedMember)?.pin}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-stone-400 bg-stone-100 px-2 py-0.5 rounded-lg">
+                            尚未綁定學號
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-xs text-stone-400 mt-0.5">社員個別訓練與社課出席明細</p>
+                    </div>
+                  </div>
+
                   <div className="flex items-center gap-2">
                     {confirmDeleteMember ? (
                       <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3 py-1.5">
-                        <span className="text-xs font-semibold text-rose-700">全刪除紀錄？</span>
+                        <span className="text-xs font-semibold text-rose-700">刪除此成員所有紀錄？</span>
                         <button
                           onClick={() => deleteAdminMember(selectedMember)}
-                          className="text-xs bg-rose-600 text-white px-2 py-1 rounded-lg font-bold"
+                          className="text-xs bg-rose-600 text-white px-2.5 py-1 rounded-lg font-bold"
                         >
                           確定
                         </button>
@@ -1715,9 +1776,9 @@ export default function App() {
                     ) : (
                       <button
                         onClick={() => setConfirmDeleteMember(true)}
-                        className="text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-xl border border-rose-200"
+                        className="text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-xl border border-rose-200 transition-colors"
                       >
-                        刪除全部紀錄
+                        刪除個人加練紀錄
                       </button>
                     )}
                     <button
@@ -1725,7 +1786,7 @@ export default function App() {
                         setSelectedMember(null);
                         setConfirmDeleteMember(false);
                       }}
-                      className="text-sienna-700 bg-sienna-50 hover:bg-sienna-100 px-3.5 py-1.5 rounded-xl font-semibold text-sm"
+                      className="text-sienna-800 bg-stone-100 hover:bg-stone-200 px-4 py-2 rounded-xl font-bold text-xs transition-colors"
                     >
                       返回名冊
                     </button>
@@ -1737,101 +1798,300 @@ export default function App() {
                     .filter((b) => b.realName === selectedMember)
                     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
                   const attended = memberRecords.filter((b) => b.attendance_status === 'attended');
-                  const totalHrs = attended.reduce(
+                  const rawTotalHrs = attended.reduce(
                     (sum, b) => sum + calculateHours(b.specificTime, b.actualTime),
                     0
                   );
+                  // 無條件進位至小數點後第 2 位
+                  const totalHrs = formatHours(rawTotalHrs);
+
+                  // 找出該成員的所有社課出席紀錄
+                  const memberClassAttendance = adminClassSessions
+                    .flatMap((s) =>
+                      (s.attendees || [])
+                        .filter((a) => a.realName === selectedMember)
+                        .map((a) => ({
+                          sessionName: s.name,
+                          date: s.date,
+                          checkedAt: a.checkedAt,
+                          id: a.id,
+                        }))
+                    )
+                    .sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime());
 
                   return (
-                    <>
-                      <div className="grid grid-cols-2 gap-4 bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                        <div>
-                          <p className="text-xs text-stone-500">出席次數</p>
-                          <p className="text-2xl font-bold text-stone-800">{attended.length} 次</p>
+                    <div className="space-y-6">
+                      {/* 3 大統計指標卡 */}
+                      <div className="grid grid-cols-3 gap-3 md:gap-4">
+                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 text-center">
+                          <p className="text-xs text-stone-500 mb-1 flex items-center justify-center gap-1">
+                            <Clock className="w-3.5 h-3.5 text-sienna-600" />
+                            加練總時數 (進位)
+                          </p>
+                          <p className="text-2xl font-black text-sienna-700">
+                            {totalHrs} <span className="text-xs font-normal text-stone-400">小時</span>
+                          </p>
                         </div>
-                        <div>
-                          <p className="text-xs text-stone-500">加練時數</p>
-                          <p className="text-2xl font-bold text-sienna-700">{totalHrs} 小時</p>
+
+                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 text-center">
+                          <p className="text-xs text-stone-500 mb-1 flex items-center justify-center gap-1">
+                            <Flame className="w-3.5 h-3.5 text-amber-600" />
+                            加練出席次數
+                          </p>
+                          <p className="text-2xl font-black text-stone-800">
+                            {attended.length} <span className="text-xs font-normal text-stone-400">次</span>
+                          </p>
+                        </div>
+
+                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 text-center">
+                          <p className="text-xs text-stone-500 mb-1 flex items-center justify-center gap-1">
+                            <GraduationCap className="w-3.5 h-3.5 text-emerald-600" />
+                            社課出席堂數
+                          </p>
+                          <p className="text-2xl font-black text-emerald-700">
+                            {memberClassAttendance.length} <span className="text-xs font-normal text-stone-400">堂</span>
+                          </p>
                         </div>
                       </div>
 
-                      <div className="space-y-3">
-                        {memberRecords.map((b) => (
-                          <div
-                            key={b.id}
-                            className="bg-white border border-stone-200 rounded-2xl p-4 shadow-2xs space-y-3"
-                          >
-                            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
-                              <div>
-                                <p className="font-bold text-stone-800">
-                                  {b.date} {b.time}
-                                </p>
-                                <p className="text-xs text-stone-500">綽號：{b.nickname}</p>
-                              </div>
-                              <div className="flex bg-stone-100 rounded-xl p-1 shrink-0">
-                                {['pending', 'attended', 'absent'].map((st) => (
-                                  <button
-                                    key={st}
-                                    onClick={() => updateAdminBooking(b.id, { attendance_status: st })}
-                                    className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
-                                      (b.attendance_status || 'pending') === st
-                                        ? st === 'attended'
-                                          ? 'bg-emerald-500 text-white shadow-2xs'
-                                          : st === 'absent'
-                                          ? 'bg-rose-500 text-white shadow-2xs'
-                                          : 'bg-stone-300 text-stone-800'
-                                        : 'text-stone-500 hover:bg-stone-200'
-                                    }`}
-                                  >
-                                    {st === 'attended' ? '已點名' : st === 'absent' ? '未加練' : '待確認'}
-                                  </button>
-                                ))}
-                              </div>
+                      {/* 兩欄明細：加練預約 & 社課出席 */}
+                      <div className="grid md:grid-cols-2 gap-6">
+                        {/* 加練紀錄 */}
+                        <div className="space-y-3">
+                          <h4 className="font-bold text-stone-800 text-sm flex items-center justify-between border-b border-stone-100 pb-2">
+                            <span className="flex items-center gap-1.5">
+                              <ClipboardCheck className="w-4 h-4 text-sienna-600" />
+                              加練預約紀錄 ({memberRecords.length})
+                            </span>
+                          </h4>
+                          {memberRecords.length === 0 ? (
+                            <p className="text-center py-8 text-stone-400 text-xs">尚無加練預約紀錄</p>
+                          ) : (
+                            <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
+                              {memberRecords.map((b) => (
+                                <div
+                                  key={b.id}
+                                  className="bg-stone-50/80 border border-stone-200/80 rounded-2xl p-3.5 space-y-2.5 text-sm"
+                                >
+                                  <div className="flex justify-between items-start">
+                                    <div>
+                                      <p className="font-bold text-stone-900">
+                                        {b.date} {b.time}
+                                      </p>
+                                      <p className="text-xs text-stone-500 mt-0.5">
+                                        預約時段：{b.specificTime}
+                                        {b.actualTime && (
+                                          <span className="text-amber-700 ml-1 font-semibold">
+                                            (實到: {b.actualTime})
+                                          </span>
+                                        )}
+                                      </p>
+                                    </div>
+                                    <span className="text-xs font-bold text-sienna-700 bg-white border border-stone-200 px-2 py-0.5 rounded-md">
+                                      {calculateHours(b.specificTime, b.actualTime)} hr
+                                    </span>
+                                  </div>
+
+                                  {/* 狀態切換 */}
+                                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-stone-200/60">
+                                    <div className="flex bg-stone-200/70 rounded-xl p-0.5">
+                                      {['pending', 'attended', 'absent'].map((st) => (
+                                        <button
+                                          key={st}
+                                          onClick={() => updateAdminBooking(b.id, { attendance_status: st })}
+                                          className={`px-2.5 py-0.5 text-3xs font-bold rounded-lg transition-all ${
+                                            (b.attendance_status || 'pending') === st
+                                              ? st === 'attended'
+                                                ? 'bg-emerald-500 text-white shadow-2xs'
+                                                : st === 'absent'
+                                                ? 'bg-rose-500 text-white shadow-2xs'
+                                                : 'bg-stone-300 text-stone-800'
+                                              : 'text-stone-500 hover:bg-stone-200'
+                                          }`}
+                                        >
+                                          {st === 'attended' ? '已點名' : st === 'absent' ? '未加練' : '待確認'}
+                                        </button>
+                                      ))}
+                                    </div>
+                                    <button
+                                      onClick={() => deleteAdminBooking(b.id)}
+                                      className="text-3xs text-stone-400 hover:text-rose-500 p-1"
+                                      title="刪除此筆"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+
+                                  <input
+                                    type="text"
+                                    placeholder="教練備註..."
+                                    className="w-full text-xs bg-white border border-stone-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-sienna-400"
+                                    value={b.note || ''}
+                                    onChange={(e) => {
+                                      setAdminBookings((prev) =>
+                                        prev.map((item) => (item.id === b.id ? { ...item, note: e.target.value } : item))
+                                      );
+                                    }}
+                                    onBlur={(e) => updateAdminBooking(b.id, { note: e.target.value })}
+                                  />
+                                </div>
+                              ))}
                             </div>
-                            <input
-                              type="text"
-                              placeholder="教練備註..."
-                              className="w-full text-xs bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 outline-none focus:border-sienna-400"
-                              value={b.note || ''}
-                              onChange={(e) => {
-                                setAdminBookings((prev) =>
-                                  prev.map((item) => (item.id === b.id ? { ...item, note: e.target.value } : item))
-                                );
-                              }}
-                              onBlur={(e) => updateAdminBooking(b.id, { note: e.target.value })}
-                            />
-                          </div>
-                        ))}
+                          )}
+                        </div>
+
+                        {/* 社課出席紀錄 */}
+                        <div className="space-y-3">
+                          <h4 className="font-bold text-stone-800 text-sm flex items-center justify-between border-b border-stone-100 pb-2">
+                            <span className="flex items-center gap-1.5">
+                              <GraduationCap className="w-4 h-4 text-emerald-600" />
+                              社課簽到歷程 ({memberClassAttendance.length})
+                            </span>
+                          </h4>
+                          {memberClassAttendance.length === 0 ? (
+                            <p className="text-center py-8 text-stone-400 text-xs">尚無社課簽到紀錄</p>
+                          ) : (
+                            <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
+                              {memberClassAttendance.map((c) => (
+                                <div
+                                  key={c.id}
+                                  className="bg-emerald-50/40 border border-emerald-100/80 rounded-2xl p-3.5 flex justify-between items-center text-sm"
+                                >
+                                  <div>
+                                    <p className="font-bold text-stone-900">{c.sessionName}</p>
+                                    <p className="text-xs text-stone-500 mt-0.5">日期：{c.date}</p>
+                                    <p className="text-3xs text-stone-400 font-mono mt-0.5">
+                                      簽到時間：{new Date(c.checkedAt).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
+                                    </p>
+                                  </div>
+                                  <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-white border border-emerald-200 px-2.5 py-1 rounded-lg shrink-0">
+                                    <Check className="w-3.5 h-3.5" />
+                                    已出席
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </>
+                    </div>
                   );
                 })()}
               </div>
             ) : (
-              <div className="space-y-4">
-                <div className="relative">
-                  <User className="w-5 h-5 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    placeholder="搜尋成員姓名..."
-                    value={memberSearch}
-                    onChange={(e) => setMemberSearch(e.target.value)}
-                    className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 outline-none text-sm"
-                  />
+              <div className="space-y-6">
+                {/* 搜尋列與統計 */}
+                <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                    <div>
+                      <h3 className="text-lg font-black text-stone-900 flex items-center gap-2">
+                        <User className="w-5 h-5 text-sienna-600" />
+                        全體社員名冊
+                      </h3>
+                      <p className="text-xs text-stone-500 mt-0.5">
+                        社員只要在「我的紀錄」首次綁定學號，即會自動新增至此名冊中
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <User className="w-5 h-5 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="搜尋成員姓名或學號..."
+                      value={memberSearch}
+                      onChange={(e) => setMemberSearch(e.target.value)}
+                      className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 outline-none text-sm"
+                    />
+                  </div>
+
+                  {/* 成員清單網格 */}
+                  {(() => {
+                    const allNames = Array.from(
+                      new Set([
+                        ...memberPins.map((p) => p.realName),
+                        ...adminBookings.map((b) => b.realName),
+                      ])
+                    ).filter((name) => {
+                      const pin = memberPins.find((p) => p.realName === name)?.pin ?? '';
+                      return name.includes(memberSearch) || pin.includes(memberSearch);
+                    });
+
+                    if (allNames.length === 0) {
+                      return (
+                        <div className="text-center py-12 text-stone-400">
+                          <User className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                          <p className="text-sm">目前名冊尚無成員資料</p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                        {allNames.map((name) => {
+                          const pin = memberPins.find((p) => p.realName === name)?.pin;
+                          const userBookings = adminBookings.filter((b) => b.realName === name);
+                          const attendedCount = userBookings.filter((b) => b.attendance_status === 'attended').length;
+                          const classCount = adminClassSessions.reduce(
+                            (acc, s) => acc + ((s.attendees || []).some((a) => a.realName === name) ? 1 : 0),
+                            0
+                          );
+
+                          return (
+                            <button
+                              key={name}
+                              onClick={() => setSelectedMember(name)}
+                              className="p-4 rounded-2xl border border-stone-200 bg-stone-50/70 hover:bg-sienna-50/80 hover:border-sienna-300 text-left transition-all group flex flex-col justify-between gap-3 shadow-2xs cursor-pointer"
+                            >
+                              <div className="flex justify-between items-start w-full">
+                                <div>
+                                  <p className="font-bold text-stone-900 text-base group-hover:text-sienna-800 transition-colors">
+                                    {name}
+                                  </p>
+                                  {pin ? (
+                                    <p className="text-xs font-mono text-stone-500 mt-0.5">學號: {pin}</p>
+                                  ) : (
+                                    <p className="text-3xs text-stone-400 mt-0.5">未綁定學號</p>
+                                  )}
+                                </div>
+                                <ChevronRight className="w-4 h-4 text-stone-400 group-hover:text-sienna-600 transition-colors shrink-0 mt-1" />
+                              </div>
+
+                              <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-stone-200/50 w-full text-3xs font-semibold">
+                                <span className="bg-sienna-100/70 text-sienna-800 px-2 py-0.5 rounded-md">
+                                  🏇 加練 {attendedCount} 次
+                                </span>
+                                <span className="bg-emerald-100/70 text-emerald-800 px-2 py-0.5 rounded-md">
+                                  📚 社課 {classCount} 堂
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                  {(Array.from(new Set(adminBookings.map((b) => b.realName))) as string[])
-                    .filter((name) => name.includes(memberSearch))
-                    .map((m) => (
-                      <button
-                        key={m}
-                        onClick={() => setSelectedMember(m)}
-                        className="p-3.5 rounded-2xl border border-stone-200 bg-stone-50/70 hover:bg-sienna-50 hover:border-sienna-300 text-left font-bold text-stone-800 transition-all text-sm truncate flex items-center justify-between"
-                      >
-                        <span className="truncate">{m}</span>
-                        <ChevronRight className="w-4 h-4 text-stone-400 shrink-0" />
-                      </button>
-                    ))}
+
+                {/* ⚠️ 學期結算危險專區 */}
+                <div className="bg-rose-50/60 border-2 border-rose-200 rounded-3xl p-5 md:p-6 space-y-3">
+                  <div className="flex items-center gap-2 text-rose-800">
+                    <AlertCircle className="w-5 h-5 text-rose-600" />
+                    <h4 className="font-black text-base">學期末結算與重置專區</h4>
+                  </div>
+                  <p className="text-xs text-rose-700 leading-relaxed">
+                    學期結束重新計算時，可在此一鍵清除全體成員註冊名冊、加練預約紀錄與社課簽到名單。請謹慎操作！
+                  </p>
+                  <button
+                    onClick={() => {
+                      setShowClearAllModal(true);
+                      setClearAllConfirmText('');
+                    }}
+                    className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-colors shadow-xs"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    一鍵清空全體成員與歷史紀錄 (學期重置)
+                  </button>
                 </div>
               </div>
             )}
@@ -2666,6 +2926,70 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 學期結算一鍵清空安全確認 Modal */}
+      {showClearAllModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden p-6 space-y-4 border border-rose-200">
+            <div className="flex justify-between items-center border-b border-stone-100 pb-3">
+              <div className="flex items-center gap-2 text-rose-600">
+                <AlertCircle className="w-6 h-6" />
+                <h3 className="font-black text-lg text-stone-900">學期結算與全體清空確認</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setShowClearAllModal(false);
+                  setClearAllConfirmText('');
+                }}
+                className="p-1 rounded-full text-stone-400 hover:bg-stone-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-stone-600">
+              <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-1.5 text-rose-900">
+                <p className="font-bold text-sm">⚠️ 此操作無法復原，將會完全清除：</p>
+                <p>1. 全體社員學號綁定名冊 (Members 表)</p>
+                <p>2. 本學期所有加練預約與出席時數紀錄 (Bookings 表)</p>
+                <p>3. 所有社課簽到出席名冊 (Class Attendance 表)</p>
+              </div>
+              <p className="font-semibold text-stone-700">
+                為了避免誤觸，請在下方輸入 <span className="text-rose-600 font-mono font-bold bg-stone-100 px-1.5 py-0.5 rounded">確認清空</span> 以解除防護鎖定：
+              </p>
+              <input
+                type="text"
+                autoFocus
+                value={clearAllConfirmText}
+                onChange={(e) => setClearAllConfirmText(e.target.value)}
+                placeholder="請輸入「確認清空」"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 focus:border-rose-500 focus:ring-2 focus:ring-rose-200 outline-none text-sm font-bold text-center"
+              />
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowClearAllModal(false);
+                  setClearAllConfirmText('');
+                }}
+                className="flex-1 py-2.5 rounded-xl border border-stone-200 text-stone-600 font-bold text-xs hover:bg-stone-50"
+              >
+                取消返回
+              </button>
+              <button
+                type="button"
+                disabled={clearingAll || clearAllConfirmText.trim() !== '確認清空'}
+                onClick={handleClearAllSemesterData}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 text-white font-bold text-xs hover:bg-rose-700 disabled:opacity-40 transition-colors shadow-xs"
+              >
+                {clearingAll ? '清空中…' : '確認執行學期重置'}
+              </button>
+            </div>
           </div>
         </div>
       )}
