@@ -44,6 +44,27 @@ export async function initDb() {
       ON CONFLICT (key) DO NOTHING;
     `;
 
+    // 社課場次表
+    await sql`
+      CREATE TABLE IF NOT EXISTS class_sessions (
+        id          VARCHAR(100) PRIMARY KEY,
+        name        VARCHAR(255) NOT NULL,
+        date        VARCHAR(50) NOT NULL,
+        is_open     BOOLEAN DEFAULT true,
+        created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `;
+
+    // 社課出席紀錄表
+    await sql`
+      CREATE TABLE IF NOT EXISTS class_attendance (
+        id          SERIAL PRIMARY KEY,
+        session_id  VARCHAR(100) NOT NULL,
+        real_name   VARCHAR(255) NOT NULL,
+        checked_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `;
+
     console.log('✅ 資料庫資料表結構確保完畢 (Vercel Postgres)');
   } catch (err) {
     console.error('❌ 初始化資料庫失敗:', err);

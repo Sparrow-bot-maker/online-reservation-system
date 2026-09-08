@@ -614,6 +614,291 @@ app.patch('/api/admin/checkin-password', async (req, res) => {
   }
 });
 
+// ─── 社課點名 API ─────────────────────────────────────────
+
+/**
+ * GET /api/class/session/:sessionId
+ * 取得社課場次公開資訊（供學生掃碼後確認場次名稱與開放狀態）
+ */
+app.get('/api/class/session/:sessionId', async (req, res) => {
+  const { sessionId } = req.params;
+  try {
+    const { rows } = await sql`
+      SELECT id, name, date, is_open as "isOpen", created_at as "createdAt"
+      FROM class_sessions
+      WHERE id = ${sessionId}
+    `;
+    if (rows.length === 0) {
+      res.status(404).json({ error: '找不到此社課場次或 QR Code 已失效' });
+      return;
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫錯誤' });
+  }
+});
+
+/**
+ * POST /api/class/session/:sessionId/checkin
+ * Body: { pin }
+ * 學生掃碼輸入學號 (PIN) 簽到社課
+ */
+app.post('/api/class/session/:sessionId/checkin', async (req, res) => {
+  const { sessionId } = req.params;
+  const { pin } = req.body as { pin?: string };
+
+  if (!pin) {
+    res.status(400).json({ error: '請輸入學號 (PIN)' });
+    return;
+  }
+
+  try {
+    // 1. 確認場次存在且開啟
+    const { rows: sessionRows } = await sql`
+      SELECT id, name, date, is_open as "isOpen"
+      FROM class_sessions
+      WHERE id = ${sessionId}
+    `;
+    if (sessionRows.length === 0) {
+      res.status(404).json({ error: '找不到此社課場次' });
+      return;
+    }
+    if (!sessionRows[0].isOpen) {
+      res.status(400).json({ error: '此社課場次點名已關閉' });
+      return;
+    }
+
+    // 2. 驗證學號 (PIN) 是否存在於 members
+    const { rows: memberRows } = await sql`
+      SELECT real_name as "realName" FROM members WHERE pin = ${pin.trim()}
+    `;
+    if (memberRows.length === 0) {
+      res.status(404).json({ error: '找不到此學號，請先至「我的紀錄」進行首次設定（綁定姓名與學號）' });
+      return;
+    }
+    const realName = memberRows[0].realName;
+
+    // 3. 檢查是否已經點名過
+    const { rows: existRows } = await sql`
+      SELECT id FROM class_attendance
+      WHERE session_id = ${sessionId} AND real_name = ${realName}
+    `;
+    if (existRows.length > 0) {
+      res.status(409).json({ error: `${realName} 同學，您已於稍早完成本社課點名！`, realName, alreadyChecked: true });
+      return;
+    }
+
+    // 4. 寫入出席紀錄
+    await sql`
+      INSERT INTO class_attendance (session_id, real_name)
+      VALUES (${sessionId}, ${realName})
+    `;
+
+    res.status(201).json({
+      message: `點名成功！歡迎 ${realName} 同學參加「${sessionRows[0].name}」社課 🐎`,
+      realName,
+      sessionName: sessionRows[0].name,
+      date: sessionRows[0].date
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫寫入錯誤' });
+  }
+});
+
+/**
+ * GET /api/member/class-stats
+ * Header: x-member-pin
+ * 查詢該社員的所有社課出席紀錄
+ */
+app.get('/api/member/class-stats', async (req, res) => {
+  const pin = req.headers['x-member-pin'] as string | undefined;
+  if (!pin) {
+    res.status(400).json({ error: '缺少 x-member-pin' });
+    return;
+  }
+
+  try {
+    const { rows: memberRows } = await sql`
+      SELECT real_name as "realName" FROM members WHERE pin = ${pin.trim()}
+    `;
+    if (memberRows.length === 0) {
+      res.status(401).json({ error: 'PIN 碼錯誤' });
+      return;
+    }
+    const realName = memberRows[0].realName;
+
+    const { rows } = await sql`
+      SELECT a.id, a.session_id as "sessionId", a.checked_at as "checkedAt", s.name as "sessionName", s.date
+      FROM class_attendance a
+      JOIN class_sessions s ON a.session_id = s.id
+      WHERE a.real_name = ${realName}
+      ORDER BY a.checked_at DESC
+    `;
+
+    res.json({ realName, records: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫查詢錯誤' });
+  }
+});
+
+// ─── 管理員：社課場次與名單管理 ─────────────────────────────
+
+/**
+ * GET /api/admin/class-sessions
+ * Header: x-admin-password
+ * 取得所有社課場次與出席名單
+ */
+app.get('/api/admin/class-sessions', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+
+  try {
+    const { rows: sessions } = await sql`
+      SELECT id, name, date, is_open as "isOpen", created_at as "createdAt"
+      FROM class_sessions
+      ORDER BY date DESC, created_at DESC
+    `;
+
+    const { rows: attendances } = await sql`
+      SELECT id, session_id as "sessionId", real_name as "realName", checked_at as "checkedAt"
+      FROM class_attendance
+      ORDER BY checked_at ASC
+    `;
+
+    const result = sessions.map(s => ({
+      ...s,
+      attendees: attendances.filter(a => a.sessionId === s.id)
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫查詢錯誤' });
+  }
+});
+
+/**
+ * POST /api/admin/class-sessions
+ * Header: x-admin-password
+ * Body: { name, date }
+ * 建立新社課場次
+ */
+app.post('/api/admin/class-sessions', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+
+  const { name, date } = req.body as { name?: string; date?: string };
+  if (!name || !date) {
+    res.status(400).json({ error: '請填寫社課名稱與日期' });
+    return;
+  }
+
+  const sessionId = 'cls_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36).slice(-4);
+  try {
+    await sql`
+      INSERT INTO class_sessions (id, name, date, is_open)
+      VALUES (${sessionId}, ${name.trim()}, ${date.trim()}, true)
+    `;
+    res.status(201).json({
+      id: sessionId,
+      name: name.trim(),
+      date: date.trim(),
+      isOpen: true,
+      message: '社課場次已建立'
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫寫入錯誤' });
+  }
+});
+
+/**
+ * PATCH /api/admin/class-sessions/:id
+ * Header: x-admin-password
+ * Body: { isOpen, name, date }
+ * 更新社課場次狀態（開啟/關閉點名）或資訊
+ */
+app.patch('/api/admin/class-sessions/:id', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+
+  const { id } = req.params;
+  const { isOpen, name, date } = req.body as { isOpen?: boolean; name?: string; date?: string };
+
+  try {
+    if (isOpen !== undefined) {
+      await sql`UPDATE class_sessions SET is_open = ${isOpen} WHERE id = ${id}`;
+    }
+    if (name) {
+      await sql`UPDATE class_sessions SET name = ${name.trim()} WHERE id = ${id}`;
+    }
+    if (date) {
+      await sql`UPDATE class_sessions SET date = ${date.trim()} WHERE id = ${id}`;
+    }
+    res.json({ message: '場次已更新' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫寫入錯誤' });
+  }
+});
+
+/**
+ * DELETE /api/admin/class-sessions/:id
+ * Header: x-admin-password
+ * 刪除社課場次及出席紀錄
+ */
+app.delete('/api/admin/class-sessions/:id', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+
+  const { id } = req.params;
+  try {
+    await sql`DELETE FROM class_attendance WHERE session_id = ${id}`;
+    await sql`DELETE FROM class_sessions WHERE id = ${id}`;
+    res.json({ message: '社課場次與出席紀錄已刪除' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫刪除錯誤' });
+  }
+});
+
+/**
+ * DELETE /api/admin/class-attendance/:id
+ * Header: x-admin-password
+ * 刪除單筆社課出席紀錄
+ */
+app.delete('/api/admin/class-attendance/:id', async (req, res) => {
+  const pwd = req.headers['x-admin-password'];
+  if (pwd !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+
+  const { id } = req.params;
+  try {
+    await sql`DELETE FROM class_attendance WHERE id = ${id}`;
+    res.json({ message: '出席紀錄已刪除' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫刪除錯誤' });
+  }
+});
+
 // ─── 啟動 ─────────────────────────────────────────────────
 
 const PORT = process.env.PORT ?? 3001;
