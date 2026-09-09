@@ -24,7 +24,7 @@ import {
   Copy,
   Check,
   KeyRound,
-  ExternalLink,
+  History,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -111,6 +111,13 @@ const timeToMins = (t: string) => {
   return h * 60 + m;
 };
 
+const calculateHoursFromRange = (timeRange: string): number => {
+  const [start, end] = timeRange.split(/[-~]/).map((s) => s.trim());
+  if (!start || !end) return 0;
+  const diff = timeToMins(end) - timeToMins(start);
+  return diff > 0 ? Math.round((diff / 60) * 10) / 10 : 0;
+};
+
 const getRiderTitle = (count: number) => {
   if (count === 0) return { title: '馬術新手', color: 'text-stone-500', bg: 'bg-stone-100', border: 'border-stone-200' };
   if (count <= 2) return { title: '見習騎手 🐎', color: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200' };
@@ -194,7 +201,7 @@ function DrumRollPicker({
 
   return (
     <div
-      className="relative overflow-hidden rounded-2xl bg-stone-50 border border-stone-200/80 shadow-inner"
+      className="relative overflow-hidden rounded-2xl bg-stone-50 border border-stone-200/80 shadow-inner w-full min-w-0"
       style={{ height: ITEM_H * VISIBLE }}
     >
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-stone-50 via-stone-50/80 to-transparent" />
@@ -205,7 +212,7 @@ function DrumRollPicker({
         style={{ top: ITEM_H * 2, height: ITEM_H }}
       />
 
-      <div ref={ref} className="h-full overflow-y-scroll" style={{ scrollbarWidth: 'none' }}>
+      <div ref={ref} className="h-full overflow-y-scroll w-full" style={{ scrollbarWidth: 'none' }}>
         <div style={{ height: ITEM_H * 2 }} />
         {items.map((item) => (
           <div
@@ -249,17 +256,20 @@ export default function App() {
   // 手動輸入場次代碼
   const [manualSessionIdInput, setManualSessionIdInput] = useState('');
 
-  // 學生端 Tab
-  const [userTab, setUserTab] = useState<'加練' | '社課點名' | '出席紀錄'>('社課點名');
+  // 學生端 Tab（順序：加練預約 → 社課點名 → 出席紀錄）
+  const [userTab, setUserTab] = useState<'加練' | '社課點名' | '出席紀錄'>('加練');
   const [attendanceQuery, setAttendanceQuery] = useState('');
+
+  // 我的紀錄查詢
+  const [memberQuery, setMemberQuery] = useState('');
 
   // 預約 Modal
   const [showModal, setShowModal] = useState(false);
   const [bookingSlot, setBookingSlot] = useState<{ date: string; time: string } | null>(null);
   const [formData, setFormData] = useState({ nickname: '', realName: '', studentId: '' });
 
-  // 幹部後台 State
-  const [view, setView] = useState<'user' | 'admin' | 'class-checkin'>('user');
+  // 頁面 View
+  const [view, setView] = useState<'user' | 'admin' | 'member' | 'class-checkin'>('user');
   const [isAdminAuth, setIsAdminAuth] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [adminTab, setAdminTab] = useState<'overview' | 'classes' | 'members' | 'settings'>('classes');
@@ -288,7 +298,6 @@ export default function App() {
     if (savedSessions) {
       setClassSessions(JSON.parse(savedSessions));
     } else {
-      // 預設示範場次
       const initialSession: ClassSession = {
         id: generate10CharSessionCode(),
         name: '正課理論與上下馬安全',
@@ -300,7 +309,6 @@ export default function App() {
       setClassSessions([initialSession]);
     }
 
-    // 支援直接透過 URL 參數進入點名： ?session=xxxxxx 或 #/class-checkin?session=xxxxxx
     const urlParams = new URLSearchParams(window.location.search);
     const sessionParam = urlParams.get('session');
     if (sessionParam) {
@@ -340,7 +348,6 @@ export default function App() {
     e.preventDefault();
     if (!newClassName.trim() || !newClassDate.trim()) return;
 
-    // 隨機產生 10 位英文數字組合代碼
     const random10Code = generate10CharSessionCode();
 
     const newSession: ClassSession = {
@@ -408,7 +415,6 @@ export default function App() {
       return;
     }
 
-    // 檢查是否已重複簽到
     const already = session.attendees.some(
       (a) => a.studentId.toLowerCase() === studentId.trim().toLowerCase()
     );
@@ -502,14 +508,157 @@ export default function App() {
 
   const riderBadge = getRiderTitle(matchedAttendance.length);
 
+  // 個人紀錄過濾
+  const memberSearchStr = memberQuery.trim().toLowerCase();
+  const userBookings = memberSearchStr
+    ? bookings.filter(
+        (b) =>
+          b.nickname.toLowerCase().includes(memberSearchStr) ||
+          b.realName.toLowerCase().includes(memberSearchStr) ||
+          (b.studentId && b.studentId.toLowerCase().includes(memberSearchStr))
+      )
+    : [];
+
+  const userClasses = memberSearchStr
+    ? allAttendanceList.filter(
+        (a) =>
+          a.nickname.toLowerCase().includes(memberSearchStr) ||
+          a.realName.toLowerCase().includes(memberSearchStr) ||
+          a.studentId.toLowerCase().includes(memberSearchStr)
+      )
+    : [];
+
+  const totalPracticeHours = userBookings.reduce((sum, b) => sum + calculateHoursFromRange(b.time), 0);
+  const memberRiderBadge = getRiderTitle(userClasses.length);
+
+  // ─────────────────── 個人紀錄視圖 (我的紀錄) ─────────────────────────────
+  const renderMemberView = () => (
+    <div className="w-full max-w-full space-y-6 animate-in fade-in duration-200">
+      <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
+            <KeyRound className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-black text-stone-800">個人訓練與出席紀錄</h2>
+            <p className="text-xs text-stone-400">輸入學號、綽號或姓名，一鍵查詢加練時數、次數與社課參加紀錄</p>
+          </div>
+        </div>
+
+        <div className="relative mt-4">
+          <Search className="w-5 h-5 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={memberQuery}
+            onChange={(e) => setMemberQuery(e.target.value)}
+            className="w-full pl-11 pr-4 py-3 rounded-2xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-100 outline-none text-sm transition-all placeholder-stone-400"
+            placeholder="請輸入學號、真實姓名或綽號搜尋..."
+          />
+        </div>
+      </div>
+
+      {memberSearchStr === '' ? (
+        <div className="bg-white p-12 rounded-3xl border border-dashed border-stone-200 text-center text-stone-400">
+          <Search className="w-10 h-10 mx-auto mb-2 opacity-30 text-stone-400" />
+          <p className="text-sm font-bold text-stone-500">請在上方搜尋欄輸入姓名或學號以檢索個人紀錄</p>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {/* 個人榮譽與統計三大指標 */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-xs flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                <Clock className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-3xs font-bold text-stone-400 uppercase tracking-wider">加練累積總時數</p>
+                <p className="text-2xl font-black text-stone-800">{totalPracticeHours} <span className="text-xs font-normal text-stone-500">小時</span></p>
+              </div>
+            </div>
+
+            <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-xs flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center shrink-0">
+                <Dumbbell className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-3xs font-bold text-stone-400 uppercase tracking-wider">加練預約總次數</p>
+                <p className="text-2xl font-black text-stone-800">{userBookings.length} <span className="text-xs font-normal text-stone-500">次</span></p>
+              </div>
+            </div>
+
+            <div className={`p-5 rounded-2xl border ${memberRiderBadge.border} ${memberRiderBadge.bg} shadow-xs flex items-center gap-3`}>
+              <div className="w-12 h-12 rounded-xl bg-white text-amber-500 shadow-xs flex items-center justify-center shrink-0">
+                <Sparkles className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-3xs font-bold text-stone-400 uppercase tracking-wider">社課出席 · 騎士成就</p>
+                <p className={`text-base font-black ${memberRiderBadge.color}`}>{memberRiderBadge.title} ({userClasses.length} 堂)</p>
+              </div>
+            </div>
+          </div>
+
+          {/* 歷程詳情 */}
+          <div className="grid md:grid-cols-2 gap-6">
+            {/* 加練歷程 */}
+            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
+              <h3 className="text-base font-black text-stone-800 flex items-center gap-2 border-b border-stone-100 pb-3">
+                <Dumbbell className="w-4 h-4 text-amber-700" />
+                加練預約明細 ({userBookings.length})
+              </h3>
+              {userBookings.length === 0 ? (
+                <p className="text-xs text-stone-400 py-6 text-center">無加練預約紀錄</p>
+              ) : (
+                <div className="space-y-2.5">
+                  {userBookings.map((b) => (
+                    <div key={b.id} className="p-3.5 bg-amber-50/60 rounded-xl border border-amber-100/80 text-xs">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-stone-800">{b.date}</span>
+                        <span className="font-mono font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded">
+                          {calculateHoursFromRange(b.time)} hrs
+                        </span>
+                      </div>
+                      <p className="text-stone-600 mt-1">{b.time} · {b.nickname} ({b.realName})</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 社課出席歷程 */}
+            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
+              <h3 className="text-base font-black text-stone-800 flex items-center gap-2 border-b border-stone-100 pb-3">
+                <GraduationCap className="w-4 h-4 text-emerald-700" />
+                社課參加歷程 ({userClasses.length})
+              </h3>
+              {userClasses.length === 0 ? (
+                <p className="text-xs text-stone-400 py-6 text-center">無社課簽到紀錄</p>
+              ) : (
+                <div className="space-y-2.5">
+                  {userClasses.map((c, i) => (
+                    <div key={i} className="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-100/80 text-xs">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-stone-800">{c.sessionName}</span>
+                        <span className="text-emerald-700 font-bold">{c.sessionDate}</span>
+                      </div>
+                      <p className="text-stone-500 mt-1">簽到時間：{c.checkedAt} · 學號：{c.studentId}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   // ─────────────────── 學生現場點名簽到頁面 ─────────────────────────────────
   if (view === 'class-checkin') {
     const currentSession = classSessions.find((s) => s.id === currentCheckinSessionId);
 
     return (
-      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl shadow-xl p-6 md:p-8 max-w-md w-full border border-stone-200">
-          {/* 返回按鈕 */}
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-3 sm:p-4 w-full max-w-full box-border">
+        <div className="bg-white rounded-3xl shadow-xl p-6 md:p-8 max-w-md w-full border border-stone-200 box-border">
           <button
             onClick={() => {
               setView('user');
@@ -632,7 +781,7 @@ export default function App() {
   const renderAdminView = () => {
     if (!isAdminAuth) {
       return (
-        <div className="max-w-md mx-auto mt-12 bg-white p-8 rounded-3xl shadow-sm border border-stone-200">
+        <div className="max-w-md w-full mx-auto mt-6 bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-200 box-border">
           <div className="flex flex-col items-center mb-6">
             <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mb-3">
               <Shield className="w-8 h-8" />
@@ -643,10 +792,12 @@ export default function App() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (passwordInput === 'admin123') {
+              if (passwordInput === 'sparrow') {
                 setIsAdminAuth(true);
                 setPasswordInput('');
-              } else alert('密碼錯誤！');
+              } else {
+                alert('密碼錯誤！');
+              }
             }}
             className="space-y-4"
           >
@@ -662,7 +813,7 @@ export default function App() {
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
                   className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-500 focus:ring-2 focus:ring-amber-100 outline-none transition-all text-sm"
-                  placeholder="預設密碼: admin123"
+                  placeholder="請輸入幹部管理密碼"
                 />
               </div>
             </div>
@@ -678,9 +829,8 @@ export default function App() {
     }
 
     return (
-      <div className="space-y-6 animate-in fade-in duration-200">
-        {/* 後台標題卡片 */}
-        <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
+      <div className="w-full max-w-full space-y-6 animate-in fade-in duration-200">
+        <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 box-border">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <h2 className="text-xl font-black text-stone-800">管理員控制台 / 幹部後台</h2>
@@ -694,7 +844,6 @@ export default function App() {
             </button>
           </div>
 
-          {/* 後台四個主要 Tab 按鈕 (符合截圖二) */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-5">
             <button
               onClick={() => setAdminTab('overview')}
@@ -743,11 +892,10 @@ export default function App() {
           </div>
         </div>
 
-        {/* ── Tab: 社課 QR Code 場次管理 (Screenshot 2) ── */}
+        {/* ── Tab: 社課 QR Code 場次管理 ── */}
         {adminTab === 'classes' && (
           <div className="space-y-6">
-            {/* 建立新社課場次卡片 */}
-            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
+            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 box-border">
               <h3 className="text-base font-bold text-stone-800 mb-4 flex items-center gap-2">
                 <GraduationCap className="w-5 h-5 text-amber-800" />
                 建立新社課場次
@@ -779,7 +927,6 @@ export default function App() {
               </form>
             </div>
 
-            {/* 場次列表 */}
             {classSessions.length === 0 ? (
               <div className="bg-white p-12 rounded-3xl shadow-sm border border-stone-200 text-center text-stone-400">
                 <GraduationCap className="w-14 h-14 mx-auto mb-3 opacity-30 text-stone-400" />
@@ -790,7 +937,7 @@ export default function App() {
                 {classSessions.map((session) => (
                   <div
                     key={session.id}
-                    className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4"
+                    className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4 box-border"
                   >
                     <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
                       <div>
@@ -881,7 +1028,7 @@ export default function App() {
               if (dateBookings.length === 0) return null;
 
               return (
-                <div key={dateObj.value} className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200">
+                <div key={dateObj.value} className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200 box-border">
                   <h3 className="text-base font-black text-amber-800 mb-4 border-b border-stone-100 pb-3 flex items-center gap-2">
                     <Dumbbell className="w-5 h-5 text-amber-700" />
                     {dateObj.display} 加練預約名冊
@@ -925,9 +1072,9 @@ export default function App() {
           </div>
         )}
 
-        {/* ── Tab: 成員出席名冊總覽 ── */}
+        {/* ── Tab: 成員名冊 ── */}
         {adminTab === 'members' && (
-          <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4 box-border">
             <h3 className="text-base font-black text-stone-800 flex items-center gap-2">
               <Users className="w-5 h-5 text-amber-800" />
               社課累積出席總表
@@ -935,7 +1082,7 @@ export default function App() {
             {allAttendanceList.length === 0 ? (
               <p className="text-xs text-stone-400 py-8 text-center">尚無任何簽到紀錄</p>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto w-full">
                 <table className="w-full text-left text-xs text-stone-700">
                   <thead className="bg-stone-50 text-stone-500 font-bold border-b border-stone-100">
                     <tr>
@@ -967,13 +1114,12 @@ export default function App() {
 
         {/* ── Tab: 設定與 PIN ── */}
         {adminTab === 'settings' && (
-          <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4 box-border">
             <h3 className="text-base font-black text-stone-800 flex items-center gap-2">
               <Settings className="w-5 h-5 text-amber-800" />
               系統設定與權限資訊
             </h3>
             <div className="p-4 bg-stone-50 rounded-2xl border border-stone-100 text-xs text-stone-600 space-y-2">
-              <p>• 預設幹部管理員密碼：<code className="bg-stone-200 px-2 py-0.5 rounded font-mono font-bold">admin123</code></p>
               <p>• 點名代碼生成長度：<code className="bg-stone-200 px-2 py-0.5 rounded font-mono font-bold">10 位隨機英數組合</code></p>
               <p>• 加練時間規則：<code className="bg-stone-200 px-2 py-0.5 rounded font-mono font-bold">09:00~12:00 / 14:00~19:00，滿 2 小時</code></p>
             </div>
@@ -985,122 +1131,59 @@ export default function App() {
 
   // ─────────────────── 學生首頁視圖 ─────────────────────────────────────────
   const renderUserView = () => (
-    <div className="grid md:grid-cols-3 gap-8 animate-in fade-in duration-200">
-      <div className="md:col-span-2 space-y-6">
-        {/* 頂部 Tab：社課現場點名 / 加練預約 / 社課出席紀錄 */}
-        <div className="flex gap-2 bg-white p-1.5 rounded-2xl border border-stone-200 shadow-sm">
-          <button
-            onClick={() => setUserTab('社課點名')}
-            className={`flex-1 py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
-              userTab === '社課點名'
-                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-200'
-                : 'text-stone-600 hover:bg-stone-100'
-            }`}
-          >
-            <QrCode className="w-4 h-4" />
-            社課現場點名
-          </button>
+    <div className="grid md:grid-cols-3 gap-6 md:gap-8 animate-in fade-in duration-200 w-full max-w-full box-border">
+      <div className="md:col-span-2 space-y-6 min-w-0 w-full">
+        {/* 頂部 Tab 排序：加練預約 → 社課點名 → 出席紀錄 */}
+        <div className="flex gap-1.5 sm:gap-2 bg-white p-1.5 rounded-2xl border border-stone-200 shadow-sm w-full box-border">
           <button
             onClick={() => setUserTab('加練')}
-            className={`flex-1 py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-3 px-2 sm:px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
               userTab === '加練'
                 ? 'bg-amber-600 text-white shadow-md shadow-amber-200'
                 : 'text-stone-600 hover:bg-stone-100'
             }`}
           >
-            <Dumbbell className="w-4 h-4" />
-            加練時段預約
+            <Dumbbell className="w-4 h-4 shrink-0" />
+            <span>加練預約</span>
+          </button>
+          <button
+            onClick={() => setUserTab('社課點名')}
+            className={`flex-1 py-3 px-2 sm:px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
+              userTab === '社課點名'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-200'
+                : 'text-stone-600 hover:bg-stone-100'
+            }`}
+          >
+            <QrCode className="w-4 h-4 shrink-0" />
+            <span>社課點名</span>
           </button>
           <button
             onClick={() => setUserTab('出席紀錄')}
-            className={`flex-1 py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-3 px-2 sm:px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
               userTab === '出席紀錄'
                 ? 'bg-stone-900 text-white shadow-md'
                 : 'text-stone-600 hover:bg-stone-100'
             }`}
           >
-            <ClipboardList className="w-4 h-4" />
-            出席紀錄
+            <ClipboardList className="w-4 h-4 shrink-0" />
+            <span>出席紀錄</span>
           </button>
         </div>
 
-        {/* ── 1. 社課現場 QR Code 點名 (Screenshot 1) ── */}
-        {userTab === '社課點名' && (
-          <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-200 text-center space-y-6">
-            <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto shadow-xs">
-              <QrCode className="w-8 h-8" />
-            </div>
-
-            <div>
-              <h3 className="text-2xl font-black text-stone-800">社課現場 QR Code 點名</h3>
-              <p className="text-xs md:text-sm text-stone-500 mt-1 max-w-md mx-auto leading-relaxed">
-                到場參加社課時，請使用手機相機直接掃描教練或幹部展示的 QR Code 完成點名簽到。
-              </p>
-            </div>
-
-            {/* 3 步驟指示卡片 (Screenshot 1) */}
-            <div className="grid sm:grid-cols-3 gap-3 text-left">
-              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-1">
-                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">
-                  1
-                </span>
-                <p className="font-bold text-stone-800 text-sm">手機掃碼</p>
-                <p className="text-xs text-stone-500">掃描現場專屬 QR Code</p>
-              </div>
-
-              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-1">
-                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">
-                  2
-                </span>
-                <p className="font-bold text-stone-800 text-sm">輸入學號</p>
-                <p className="text-xs text-stone-500">輸入個人學號 (PIN)</p>
-              </div>
-
-              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-1">
-                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">
-                  3
-                </span>
-                <p className="font-bold text-stone-800 text-sm">完成簽到</p>
-                <p className="text-xs text-stone-500">系統即時記錄出席</p>
-              </div>
-            </div>
-
-            {/* 手動輸入場次代碼備案 (Screenshot 1: 支援 10 字代碼) */}
-            <div className="pt-4 border-t border-stone-100 text-left space-y-2">
-              <p className="text-xs font-bold text-stone-600">相機無法掃描？手動輸入場次代碼：</p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={manualSessionIdInput}
-                  onChange={(e) => setManualSessionIdInput(e.target.value)}
-                  placeholder="輸入 10 位場次代碼 (例如: A8k9X2mP4q)"
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 text-xs outline-none focus:border-emerald-500 font-mono transition-all"
-                />
-                <button
-                  onClick={handleManualSessionGo}
-                  className="px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition-colors shrink-0 shadow-sm"
-                >
-                  前往點名
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── 2. 加練預約 (iOS Drum Roll 選擇器) ── */}
+        {/* ── 1. 加練預約 (Drum Roll 選擇器) ── */}
         {userTab === '加練' && (
-          <>
-            <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200">
+          <div className="space-y-6 w-full">
+            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 w-full box-border">
               <div className="flex items-center gap-2 mb-4">
                 <Calendar className="w-5 h-5 text-amber-600" />
                 <h2 className="text-base font-black text-stone-800">1. 選擇加練日期</h2>
               </div>
-              <div className="flex overflow-x-auto gap-2 pb-1">
+              <div className="flex overflow-x-auto gap-2 pb-1 w-full" style={{ scrollbarWidth: 'none' }}>
                 {dates.map((d) => (
                   <button
                     key={d.value}
                     onClick={() => setSelectedDate(d.value)}
-                    className={`whitespace-nowrap px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                    className={`whitespace-nowrap px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all shrink-0 ${
                       selectedDate === d.value
                         ? 'bg-amber-600 text-white shadow-md shadow-amber-200'
                         : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
@@ -1112,7 +1195,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200">
+            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 w-full box-border">
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-2">
                   <Clock className="w-5 h-5 text-amber-600" />
@@ -1126,8 +1209,8 @@ export default function App() {
                 開放時段：09:00–12:00 或 14:00–19:00（單次最少需滿 2 小時）
               </p>
 
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div>
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-4 w-full">
+                <div className="min-w-0">
                   <p className="text-xs font-bold text-stone-500 uppercase tracking-wider text-center mb-2">
                     開始時間
                   </p>
@@ -1140,7 +1223,7 @@ export default function App() {
                     }}
                   />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-xs font-bold text-stone-500 uppercase tracking-wider text-center mb-2">
                     結束時間
                   </p>
@@ -1155,8 +1238,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 即時時長計算 */}
-              <div className="flex items-center justify-center gap-2 bg-amber-50/80 border border-amber-100 rounded-2xl p-3.5 mb-4">
+              <div className="flex items-center justify-center gap-2 bg-amber-50/80 border border-amber-100 rounded-2xl p-3.5 mb-4 text-center">
                 <Clock className="w-4 h-4 text-amber-700 shrink-0" />
                 <span className="text-amber-900 font-bold text-xs sm:text-sm">
                   {practiceStart} － {practiceEnd}
@@ -1185,12 +1267,73 @@ export default function App() {
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
-          </>
+          </div>
         )}
 
-        {/* ── 3. 社課出席紀錄查詢 ── */}
+        {/* ── 2. 社課點名 (Screenshot 1) ── */}
+        {userTab === '社課點名' && (
+          <div className="bg-white p-5 md:p-8 rounded-3xl shadow-sm border border-stone-200 text-center space-y-6 w-full box-border">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto shadow-xs">
+              <QrCode className="w-8 h-8" />
+            </div>
+
+            <div>
+              <h3 className="text-2xl font-black text-stone-800">社課現場 QR Code 點名</h3>
+              <p className="text-xs md:text-sm text-stone-500 mt-1 max-w-md mx-auto leading-relaxed">
+                到場參加社課時，請使用手機相機直接掃描教練或幹部展示的 QR Code 完成點名簽到。
+              </p>
+            </div>
+
+            <div className="grid sm:grid-cols-3 gap-3 text-left">
+              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-1">
+                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">
+                  1
+                </span>
+                <p className="font-bold text-stone-800 text-sm">手機掃碼</p>
+                <p className="text-xs text-stone-500">掃描現場專屬 QR Code</p>
+              </div>
+
+              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-1">
+                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">
+                  2
+                </span>
+                <p className="font-bold text-stone-800 text-sm">輸入學號</p>
+                <p className="text-xs text-stone-500">輸入個人學號 (PIN)</p>
+              </div>
+
+              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-1">
+                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">
+                  3
+                </span>
+                <p className="font-bold text-stone-800 text-sm">完成簽到</p>
+                <p className="text-xs text-stone-500">系統即時記錄出席</p>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-stone-100 text-left space-y-2">
+              <p className="text-xs font-bold text-stone-600">相機無法掃描？手動輸入場次代碼：</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={manualSessionIdInput}
+                  onChange={(e) => setManualSessionIdInput(e.target.value)}
+                  placeholder="輸入 10 位場次代碼 (例如: A8k9X2mP4q)"
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 text-xs outline-none focus:border-emerald-500 font-mono transition-all min-w-0"
+                />
+                <button
+                  onClick={handleManualSessionGo}
+                  className="px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition-colors shrink-0 shadow-sm"
+                >
+                  前往點名
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── 3. 出席紀錄 ── */}
         {userTab === '出席紀錄' && (
-          <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200">
+          <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 w-full box-border">
             <div className="flex items-center gap-2 mb-1">
               <ClipboardList className="w-5 h-5 text-emerald-600" />
               <h2 className="text-base font-black text-stone-800">查詢社課出席紀錄</h2>
@@ -1223,7 +1366,6 @@ export default function App() {
               </div>
             ) : (
               <div className="space-y-4 animate-in fade-in">
-                {/* 榮譽徽章卡片 */}
                 <div className={`p-4 rounded-2xl border ${riderBadge.border} ${riderBadge.bg} flex items-center justify-between`}>
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-white shadow-xs flex items-center justify-center">
@@ -1240,7 +1382,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 出席歷史列表 */}
                 <div className="space-y-2">
                   <p className="text-xs font-bold text-stone-500 uppercase tracking-wider px-1">出席清單</p>
                   {matchedAttendance.map((r, i) => (
@@ -1267,8 +1408,8 @@ export default function App() {
       </div>
 
       {/* 側邊欄：我的加練預約 */}
-      <div className="space-y-6">
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200">
+      <div className="space-y-6 min-w-0 w-full">
+        <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 w-full box-border">
           <div className="flex items-center gap-2 mb-4">
             <Dumbbell className="w-5 h-5 text-amber-600" />
             <h2 className="text-base font-black text-stone-800">我的加練預約</h2>
@@ -1311,47 +1452,69 @@ export default function App() {
 
   // ─────────────────── 全域渲染 ─────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-stone-100/70 text-stone-900 font-sans p-4 md:p-8 relative w-full overflow-x-hidden">
-      {/* 頂部切換後台按鈕 */}
-      <div className="absolute top-4 right-4 md:top-8 md:right-8 flex items-center gap-2 z-10">
+    <div className="min-h-screen bg-stone-100/70 text-stone-900 font-sans p-3 sm:p-6 md:p-8 w-full max-w-full overflow-x-hidden box-border">
+      {/* 頂部導覽列（流式響應式，保證不超出螢幕） */}
+      <div className="max-w-4xl mx-auto flex justify-end items-center gap-2 mb-4 w-full box-border">
+        <button
+          onClick={() => setView(view === 'member' ? 'user' : 'member')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 border text-xs font-bold rounded-xl transition-all shadow-2xs ${
+            view === 'member'
+              ? 'bg-amber-800 text-white border-amber-800'
+              : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-50 hover:text-amber-800'
+          }`}
+        >
+          <KeyRound className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          <span>{view === 'member' ? '返回首頁' : '我的紀錄'}</span>
+        </button>
+
         <button
           onClick={() => setView(view === 'admin' ? 'user' : 'admin')}
-          className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-stone-200 text-stone-700 rounded-xl text-xs font-bold hover:bg-stone-50 hover:text-amber-800 transition-all shadow-xs"
+          className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 border text-xs font-bold rounded-xl transition-all shadow-2xs ${
+            view === 'admin'
+              ? 'bg-stone-900 text-white border-stone-900'
+              : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-50'
+          }`}
         >
-          <Shield className="w-4 h-4" />
-          <span>{view === 'admin' ? '返回社員頁' : '幹部後台'}</span>
+          <Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          <span>{view === 'admin' ? '返回首頁' : '幹部後台'}</span>
         </button>
       </div>
 
-      <div className="max-w-4xl mx-auto space-y-6 pt-10 md:pt-0 w-full">
+      <div className="max-w-4xl mx-auto space-y-6 w-full box-border">
         {/* Header */}
-        <header className="text-center space-y-2">
+        <header className="text-center space-y-1.5 sm:space-y-2">
           <div className="inline-flex items-center gap-1.5 px-3.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-bold text-amber-900 mb-1 shadow-2xs">
             <span>🐎</span> 馬術社訓練預約與社課系統
           </div>
-          <h1 className="text-3xl md:text-4xl font-black text-stone-800 tracking-tight">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-stone-800 tracking-tight">
             {view === 'user'
               ? '馬術社加練與社課系統'
               : view === 'admin'
               ? '管理員控制台 / 幹部後台'
+              : view === 'member'
+              ? '個人訓練與出席紀錄'
               : '社課現場點名簽到'}
           </h1>
-          <p className="text-xs md:text-sm text-stone-500">
+          <p className="text-xs md:text-sm text-stone-500 max-w-md mx-auto">
             {view === 'user'
-              ? '加練時段預約、社課現場 QR 點名、出席紀錄查詢'
+              ? '加練預約、社課點名、出席紀錄查詢'
               : view === 'admin'
               ? '統整管理加練名冊、社課 QR Code 場次與點名密碼'
+              : view === 'member'
+              ? '查看個人加練累積總時數、次數與社課出席紀錄'
               : '請確認場次資訊並輸入學號完成簽到'}
           </p>
         </header>
 
-        {view === 'user' ? renderUserView() : renderAdminView()}
+        {view === 'user' && renderUserView()}
+        {view === 'admin' && renderAdminView()}
+        {view === 'member' && renderMemberView()}
       </div>
 
       {/* ── 後台專用：QR Code Modal ── */}
       {activeQrSession && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 max-w-sm w-full text-center border border-stone-200 animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/40 backdrop-blur-xs box-border">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 max-w-sm w-full text-center border border-stone-200 animate-in fade-in zoom-in-95 duration-150 box-border">
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-black text-stone-800 text-lg">現場簽到 QR Code</h3>
               <button
@@ -1367,7 +1530,7 @@ export default function App() {
 
             <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 inline-block shadow-inner">
               {qrModalDataUrl ? (
-                <img src={qrModalDataUrl} alt="QR Code" width={260} height={260} className="rounded-xl" />
+                <img src={qrModalDataUrl} alt="QR Code" width={260} height={260} className="rounded-xl max-w-full" />
               ) : (
                 <div className="w-[260px] h-[260px] flex items-center justify-center">
                   <RefreshCw className="w-8 h-8 text-stone-400 animate-spin" />
@@ -1392,8 +1555,8 @@ export default function App() {
 
       {/* ── 後台專用：檢視名冊 Modal ── */}
       {activeAttendeesSession && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-lg w-full border border-stone-200 max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/40 backdrop-blur-xs box-border">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-lg w-full border border-stone-200 max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95 duration-150 box-border">
             <div className="flex justify-between items-center pb-4 border-b border-stone-100">
               <div>
                 <h3 className="font-black text-stone-800 text-base">{activeAttendeesSession.name}</h3>
@@ -1432,8 +1595,8 @@ export default function App() {
 
       {/* ── 加練預約資料填寫 Modal ── */}
       {view === 'user' && showModal && bookingSlot && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-stone-200 animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/40 backdrop-blur-xs box-border">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-stone-200 animate-in fade-in zoom-in-95 duration-150 box-border">
             <div className="p-6 border-b border-stone-100 flex justify-between items-center">
               <h3 className="text-base font-black text-stone-800">填寫加練預約資料</h3>
               <button

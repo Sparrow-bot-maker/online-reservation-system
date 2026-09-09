@@ -4,7 +4,7 @@ import sql, { initDb, autoMarkAbsent } from './db.js';
 const app = express();
 app.use(express.json());
 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'admin123';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'sparrow';
 
 // 啟動時初始化資料表
 initDb();
