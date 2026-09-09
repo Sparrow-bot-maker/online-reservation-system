@@ -374,7 +374,7 @@ export default function App() {
 
   // 路由與導航 State
   const [view, setView] = useState<'user' | 'admin' | 'member' | 'class-checkin'>('user');
-  const [userTab, setUserTab] = useState<'加練' | '社課點名' | '出席紀錄'>('加練');
+  const [userTab, setUserTab] = useState<'加練' | '社課點名'>('加練');
   const [urlSessionId, setUrlSessionId] = useState<string | null>(null);
 
   // 幹部後台 State
@@ -2247,7 +2247,7 @@ export default function App() {
   const renderUserView = () => (
     <div className="grid md:grid-cols-3 gap-6 md:gap-8 animate-in fade-in duration-200 w-full max-w-full box-border">
       <div className="md:col-span-2 space-y-6 min-w-0 w-full">
-        {/* 頂部 Tab 排序：加練預約 → 社課點名 → 出席紀錄 */}
+        {/* 頂部 Tab 排序：加練預約 → 社課點名 */}
         <div className="flex gap-1.5 sm:gap-2 bg-white p-1.5 rounded-2xl border border-stone-200 shadow-sm w-full box-border">
           <button
             onClick={() => setUserTab('加練')}
@@ -2270,17 +2270,6 @@ export default function App() {
           >
             <QrCode className="w-4 h-4 shrink-0" />
             <span>社課點名</span>
-          </button>
-          <button
-            onClick={() => setUserTab('出席紀錄')}
-            className={`flex-1 py-3 px-2 sm:px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
-              userTab === '出席紀錄'
-                ? 'bg-amber-600 text-white shadow-md shadow-amber-200'
-                : 'text-stone-600 hover:bg-stone-100'
-            }`}
-          >
-            <ClipboardList className="w-4 h-4 shrink-0" />
-            <span>出席紀錄</span>
           </button>
         </div>
 
@@ -2410,166 +2399,6 @@ export default function App() {
                 </button>
               </form>
             </div>
-          </div>
-        )}
-
-        {/* ── 3. 出席紀錄 (支援首次使用姓名登記與學號快速查詢) ── */}
-        {userTab === '出席紀錄' && (
-          <div className="space-y-6 w-full box-border">
-            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4 w-full box-border">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ClipboardList className="w-5 h-5 text-amber-600" />
-                  <h3 className="text-base font-black text-stone-800">查詢我的訓練與社課出席</h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setMemberQueryMode((m) => (m === 'query' ? 'register' : 'query'))}
-                  className="text-3xs text-amber-700 hover:underline font-bold"
-                >
-                  {memberQueryMode === 'query' ? '首次使用？點此登記' : '切換至學號快速查詢'}
-                </button>
-              </div>
-
-              {memberQueryMode === 'query' ? (
-                <form onSubmit={handleMemberPinSubmit} className="flex gap-2">
-                  <input
-                    type="text"
-                    required
-                    value={memberPinInput}
-                    onChange={(e) => setMemberPinInput(e.target.value)}
-                    placeholder="請輸入學號"
-                    className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none text-xs font-mono"
-                  />
-                  <button
-                    type="submit"
-                    disabled={memberLoading || !memberPinInput.trim()}
-                    className="px-5 py-2.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs disabled:opacity-50 shrink-0"
-                  >
-                    {memberLoading ? '查詢中…' : '送出查詢'}
-                  </button>
-                </form>
-              ) : (
-                <form onSubmit={handleRegisterMember} className="space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="block text-3xs font-bold text-stone-600 mb-1">真實姓名 (本名)</label>
-                      <input
-                        type="text"
-                        required
-                        value={registerRealNameInput}
-                        onChange={(e) => setRegisterRealNameInput(e.target.value)}
-                        placeholder="請輸入本名"
-                        className="w-full px-3.5 py-2 rounded-xl border border-stone-200 focus:border-amber-600 outline-none text-xs"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-3xs font-bold text-stone-600 mb-1">學號 (PIN)</label>
-                      <input
-                        type="text"
-                        required
-                        value={registerStudentIdInput}
-                        onChange={(e) => setRegisterStudentIdInput(e.target.value)}
-                        placeholder="請輸入學號"
-                        className="w-full px-3.5 py-2 rounded-xl border border-stone-200 focus:border-amber-600 outline-none text-xs font-mono"
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={registerLoading || !registerRealNameInput.trim() || !registerStudentIdInput.trim()}
-                    className="w-full py-2.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs disabled:opacity-50"
-                  >
-                    {registerLoading ? '登記中…' : '完成登記並查詢紀錄'}
-                  </button>
-                </form>
-              )}
-            </div>
-
-            {submittedMemberPin && (
-              <div className="space-y-4 animate-in fade-in">
-                {/* 3 大指標 */}
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="bg-white p-4 rounded-2xl border border-stone-200 text-center shadow-xs">
-                    <p className="text-xs text-stone-500 mb-1 flex items-center justify-center gap-1">
-                      <Clock className="w-3.5 h-3.5 text-amber-600" />
-                      加練時數
-                    </p>
-                    <p className="text-xl font-black text-amber-700">
-                      {formatHours(
-                        memberRecords.reduce(
-                          (sum, r) => sum + calculateHours(r.specificTime || r.time, r.actualTime),
-                          0
-                        )
-                      )} <span className="text-xs font-normal text-stone-400">小時</span>
-                    </p>
-                  </div>
-                  <div className="bg-white p-4 rounded-2xl border border-stone-200 text-center shadow-xs">
-                    <p className="text-xs text-stone-500 mb-1 flex items-center justify-center gap-1">
-                      <Flame className="w-3.5 h-3.5 text-amber-600" />
-                      加練次數
-                    </p>
-                    <p className="text-xl font-black text-stone-800">
-                      {memberRecords.length} <span className="text-xs font-normal text-stone-400">次</span>
-                    </p>
-                  </div>
-                  <div className="bg-white p-4 rounded-2xl border border-stone-200 text-center shadow-xs">
-                    <p className="text-xs text-stone-500 mb-1 flex items-center justify-center gap-1">
-                      <GraduationCap className="w-3.5 h-3.5 text-emerald-600" />
-                      社課出席
-                    </p>
-                    <p className="text-xl font-black text-emerald-700">
-                      {memberClassRecords.length} <span className="text-xs font-normal text-stone-400">堂</span>
-                    </p>
-                  </div>
-                </div>
-
-                {/* 歷程清單 */}
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm space-y-2">
-                    <h4 className="text-xs font-bold text-stone-800 flex items-center gap-1.5 pb-2 border-b border-stone-100">
-                      <Dumbbell className="w-4 h-4 text-amber-600" />
-                      加練預約歷程 ({memberRecords.length})
-                    </h4>
-                    {memberRecords.length === 0 ? (
-                      <p className="text-xs text-stone-400 py-4 text-center">無加練紀錄</p>
-                    ) : (
-                      memberRecords.map((r) => (
-                        <div key={r.id} className="p-2.5 bg-stone-50 rounded-xl text-xs flex justify-between">
-                          <div>
-                            <p className="font-bold text-stone-800">{r.date}</p>
-                            <p className="text-stone-400">{r.specificTime || r.time}</p>
-                          </div>
-                          <span className="font-bold text-amber-700">
-                            {calculateHours(r.specificTime || r.time, r.actualTime)} hr
-                          </span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm space-y-2">
-                    <h4 className="text-xs font-bold text-stone-800 flex items-center gap-1.5 pb-2 border-b border-stone-100">
-                      <GraduationCap className="w-4 h-4 text-emerald-600" />
-                      社課簽到歷程 ({memberClassRecords.length})
-                    </h4>
-                    {memberClassRecords.length === 0 ? (
-                      <p className="text-xs text-stone-400 py-4 text-center">無社課簽到紀錄</p>
-                    ) : (
-                      memberClassRecords.map((c) => (
-                        <div key={c.id} className="p-2.5 bg-emerald-50/50 rounded-xl text-xs flex justify-between">
-                          <div>
-                            <p className="font-bold text-stone-800">{c.sessionName}</p>
-                            <p className="text-stone-400">日期：{c.date}</p>
-                          </div>
-                          <span className="font-bold text-emerald-700">已出席</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>
