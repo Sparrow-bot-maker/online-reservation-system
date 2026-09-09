@@ -398,8 +398,37 @@ export default function App() {
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
   const [confirmDeleteMember, setConfirmDeleteMember] = useState(false);
 
-  // 社員個人紀錄查詢 State
-  const [memberPinInput, setMemberPinInput] = useState('');
+  // 社員個人紀錄查詢 State (支援首次登記姓名與學號，之後只需輸入學號)
+  const [memberPinInput, setMemberPinInput] = useState(() => {
+    try {
+      return localStorage.getItem('app_my_student_id') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [memberQueryMode, setMemberQueryMode] = useState<'query' | 'register'>(() => {
+    try {
+      return localStorage.getItem('app_my_student_id') ? 'query' : 'register';
+    } catch {
+      return 'register';
+    }
+  });
+  const [registerRealNameInput, setRegisterRealNameInput] = useState(() => {
+    try {
+      return localStorage.getItem('app_my_real_name') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [registerStudentIdInput, setRegisterStudentIdInput] = useState(() => {
+    try {
+      return localStorage.getItem('app_my_student_id') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [registerLoading, setRegisterLoading] = useState(false);
+  const [registerMessage, setRegisterMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [submittedMemberPin, setSubmittedMemberPin] = useState('');
   const [memberRecords, setMemberRecords] = useState<MemberRecord[]>([]);
   const [memberClassRecords, setMemberClassRecords] = useState<MemberClassRecord[]>([]);
@@ -588,6 +617,22 @@ export default function App() {
       localStorage.setItem('app_bookings', JSON.stringify(all));
     } catch {
       // ignore
+    }
+
+    // 自動記錄學號與姓名至名冊
+    if (newBooking.realName && newBooking.studentId) {
+      setMemberPins((prev) => {
+        if (!prev.some((p) => p.pin === newBooking.studentId)) {
+          return [...prev, { realName: newBooking.realName!, pin: newBooking.studentId!, createdAt: new Date().toISOString() }];
+        }
+        return prev;
+      });
+      try {
+        localStorage.setItem('app_my_student_id', newBooking.studentId);
+        localStorage.setItem('app_my_real_name', newBooking.realName);
+      } catch {
+        // ignore
+      }
     }
 
     setShowModal(false);
@@ -867,6 +912,22 @@ export default function App() {
       // ignore
     }
 
+    // 自動記錄學號與姓名至名冊
+    if (newAttendee.realName && newAttendee.studentId) {
+      setMemberPins((prev) => {
+        if (!prev.some((p) => p.pin === newAttendee.studentId)) {
+          return [...prev, { realName: newAttendee.realName, pin: newAttendee.studentId, createdAt: new Date().toISOString() }];
+        }
+        return prev;
+      });
+      try {
+        localStorage.setItem('app_my_student_id', newAttendee.studentId);
+        localStorage.setItem('app_my_real_name', newAttendee.realName);
+      } catch {
+        // ignore
+      }
+    }
+
     setClassSessions((prev) =>
       prev.map((s) =>
         s.id === targetSessionId
@@ -882,7 +943,51 @@ export default function App() {
     });
   };
 
-  // ─── 社員個人紀錄查詢 (以學號為唯一依據，點擊查詢/Enter 才送出) ──────────────
+  // ─── 社員首次登記與紀錄查詢 ─────────────────────────────────────────────
+
+  const handleRegisterMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = registerRealNameInput.trim();
+    const pin = registerStudentIdInput.trim();
+    if (!name || !pin) {
+      setRegisterMessage({ type: 'error', text: '請輸入姓名與學號' });
+      return;
+    }
+
+    setRegisterLoading(true);
+    setRegisterMessage(null);
+
+    // 1. 同步送往後端登記
+    try {
+      await fetch('/api/member/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ realName: name, pin: pin }),
+      });
+    } catch {
+      // ignore
+    }
+
+    // 2. 更新本地 memberPins 與 localStorage 讓後台和後續查詢立刻生效
+    setMemberPins((prev) => {
+      const filtered = prev.filter((p) => p.pin !== pin && p.realName !== name);
+      return [...filtered, { realName: name, pin: pin, createdAt: new Date().toISOString() }];
+    });
+
+    try {
+      localStorage.setItem('app_my_student_id', pin);
+      localStorage.setItem('app_my_real_name', name);
+    } catch {
+      // ignore
+    }
+
+    setMemberPinInput(pin);
+    setRegisterLoading(false);
+    setRegisterMessage({ type: 'success', text: `登記成功！已為您綁定「${name} (${pin})」，今後只需輸入學號即可查詢。` });
+
+    // 自動執行查詢顯示紀錄
+    handleQueryMemberStats(pin);
+  };
 
   const handleQueryMemberStats = async (pinToQuery: string) => {
     const pin = pinToQuery.trim();
@@ -1866,38 +1971,155 @@ export default function App() {
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // 視圖 3: 個人訓練與社課紀錄視圖 (我的紀錄)
+  // 視圖 3: 個人訓練與社課紀錄視圖 (我的紀錄 - 支援首次使用姓名登記與學號快速查詢)
   // ═══════════════════════════════════════════════════════════════════════════
 
   const renderMemberView = () => (
     <div className="space-y-6 animate-in fade-in duration-200 w-full max-w-full box-border">
-      {/* 查詢表單 */}
-      <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 max-w-xl mx-auto box-border">
-        <div className="flex flex-col items-center mb-5 text-center">
+      {/* 查詢與首次登記卡片 */}
+      <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 max-w-xl mx-auto box-border space-y-4">
+        <div className="flex flex-col items-center text-center">
           <div className="w-12 h-12 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-center mb-2 shadow-inner">
             <KeyRound className="w-6 h-6 text-amber-700" />
           </div>
           <h3 className="text-base font-black text-stone-800">個人加練與社課出席查詢</h3>
-          <p className="text-xs text-stone-500 mt-0.5">請輸入學號並點擊查詢以查看您的專屬時數紀錄</p>
+          <p className="text-xs text-stone-500 mt-1">
+            {memberQueryMode === 'register'
+              ? '首次使用請先登記真實姓名與學號，後台將建立專屬檔案'
+              : '已登記之社員，請直接輸入學號即可查詢'}
+          </p>
         </div>
 
-        <form onSubmit={handleMemberPinSubmit} className="flex gap-2">
-          <input
-            type="text"
-            required
-            value={memberPinInput}
-            onChange={(e) => setMemberPinInput(e.target.value)}
-            className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none transition-all font-mono text-xs"
-            placeholder="請輸入學號"
-          />
+        {/* 模式切換膠囊 */}
+        <div className="flex bg-stone-100 p-1 rounded-2xl border border-stone-200/80 text-xs font-bold w-full">
           <button
-            type="submit"
-            disabled={memberLoading || !memberPinInput.trim()}
-            className="px-5 py-2.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs disabled:opacity-50 shrink-0"
+            type="button"
+            onClick={() => {
+              setMemberQueryMode('query');
+              setRegisterMessage(null);
+            }}
+            className={`flex-1 py-2 rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+              memberQueryMode === 'query'
+                ? 'bg-white text-amber-800 shadow-xs'
+                : 'text-stone-500 hover:text-stone-800'
+            }`}
           >
-            {memberLoading ? '查詢中…' : '查詢紀錄'}
+            <Search className="w-3.5 h-3.5" />
+            <span>學號快速查詢</span>
           </button>
-        </form>
+          <button
+            type="button"
+            onClick={() => {
+              setMemberQueryMode('register');
+              setRegisterMessage(null);
+            }}
+            className={`flex-1 py-2 rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+              memberQueryMode === 'register'
+                ? 'bg-white text-amber-800 shadow-xs'
+                : 'text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+            <span>首次使用登記</span>
+          </button>
+        </div>
+
+        {/* 提示訊息 */}
+        {registerMessage && (
+          <div
+            className={`p-3 rounded-2xl text-xs flex items-center gap-2 ${
+              registerMessage.type === 'success'
+                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                : 'bg-rose-50 text-rose-800 border border-rose-200'
+            }`}
+          >
+            {registerMessage.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            )}
+            <span>{registerMessage.text}</span>
+          </div>
+        )}
+
+        {/* 模式 1: 學號快速查詢 */}
+        {memberQueryMode === 'query' ? (
+          <form onSubmit={handleMemberPinSubmit} className="space-y-3">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                required
+                value={memberPinInput}
+                onChange={(e) => setMemberPinInput(e.target.value)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none transition-all font-mono text-xs"
+                placeholder="請輸入學號"
+              />
+              <button
+                type="submit"
+                disabled={memberLoading || !memberPinInput.trim()}
+                className="px-5 py-2.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs disabled:opacity-50 shrink-0 flex items-center gap-1.5"
+              >
+                {memberLoading ? '查詢中…' : '查詢紀錄'}
+              </button>
+            </div>
+            <div className="flex justify-between items-center px-1">
+              <span className="text-3xs text-stone-400">輸入學號按 Enter 即可快速查詢</span>
+              <button
+                type="button"
+                onClick={() => setMemberQueryMode('register')}
+                className="text-3xs text-amber-700 hover:underline font-bold"
+              >
+                首次使用？點此登記姓名與學號
+              </button>
+            </div>
+          </form>
+        ) : (
+          /* 模式 2: 首次使用登記 (輸入 realname 與 學號) */
+          <form onSubmit={handleRegisterMember} className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <label className="block text-3xs font-bold text-stone-600 mb-1">真實姓名 (本名)</label>
+                <input
+                  type="text"
+                  required
+                  value={registerRealNameInput}
+                  onChange={(e) => setRegisterRealNameInput(e.target.value)}
+                  placeholder="請輸入本名"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-3xs font-bold text-stone-600 mb-1">學號 (PIN 碼)</label>
+                <input
+                  type="text"
+                  required
+                  value={registerStudentIdInput}
+                  onChange={(e) => setRegisterStudentIdInput(e.target.value)}
+                  placeholder="請輸入學號"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={registerLoading || !registerRealNameInput.trim() || !registerStudentIdInput.trim()}
+              className="w-full py-2.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs disabled:opacity-50 flex items-center justify-center gap-1.5"
+            >
+              {registerLoading ? '登記中…' : '完成登記並查詢紀錄'}
+            </button>
+
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setMemberQueryMode('query')}
+                className="text-3xs text-stone-500 hover:text-stone-800 font-bold"
+              >
+                已經登記過？切換至「學號快速查詢」
+              </button>
+            </div>
+          </form>
+        )}
       </div>
 
       {/* 查詢結果卡片 */}
@@ -2191,32 +2413,77 @@ export default function App() {
           </div>
         )}
 
-        {/* ── 3. 出席紀錄 (以學號為唯一依據，點擊查詢/Enter 才送出) ── */}
+        {/* ── 3. 出席紀錄 (支援首次使用姓名登記與學號快速查詢) ── */}
         {userTab === '出席紀錄' && (
           <div className="space-y-6 w-full box-border">
             <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4 w-full box-border">
-              <div className="flex items-center gap-2">
-                <ClipboardList className="w-5 h-5 text-amber-600" />
-                <h3 className="text-base font-black text-stone-800">查詢我的訓練與社課出席</h3>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ClipboardList className="w-5 h-5 text-amber-600" />
+                  <h3 className="text-base font-black text-stone-800">查詢我的訓練與社課出席</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMemberQueryMode((m) => (m === 'query' ? 'register' : 'query'))}
+                  className="text-3xs text-amber-700 hover:underline font-bold"
+                >
+                  {memberQueryMode === 'query' ? '首次使用？點此登記' : '切換至學號快速查詢'}
+                </button>
               </div>
 
-              <form onSubmit={handleMemberPinSubmit} className="flex gap-2">
-                <input
-                  type="text"
-                  required
-                  value={memberPinInput}
-                  onChange={(e) => setMemberPinInput(e.target.value)}
-                  placeholder="請輸入學號"
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none text-xs font-mono"
-                />
-                <button
-                  type="submit"
-                  disabled={memberLoading || !memberPinInput.trim()}
-                  className="px-5 py-2.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs disabled:opacity-50 shrink-0"
-                >
-                  {memberLoading ? '查詢中…' : '送出查詢'}
-                </button>
-              </form>
+              {memberQueryMode === 'query' ? (
+                <form onSubmit={handleMemberPinSubmit} className="flex gap-2">
+                  <input
+                    type="text"
+                    required
+                    value={memberPinInput}
+                    onChange={(e) => setMemberPinInput(e.target.value)}
+                    placeholder="請輸入學號"
+                    className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none text-xs font-mono"
+                  />
+                  <button
+                    type="submit"
+                    disabled={memberLoading || !memberPinInput.trim()}
+                    className="px-5 py-2.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs disabled:opacity-50 shrink-0"
+                  >
+                    {memberLoading ? '查詢中…' : '送出查詢'}
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleRegisterMember} className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-3xs font-bold text-stone-600 mb-1">真實姓名 (本名)</label>
+                      <input
+                        type="text"
+                        required
+                        value={registerRealNameInput}
+                        onChange={(e) => setRegisterRealNameInput(e.target.value)}
+                        placeholder="請輸入本名"
+                        className="w-full px-3.5 py-2 rounded-xl border border-stone-200 focus:border-amber-600 outline-none text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-3xs font-bold text-stone-600 mb-1">學號 (PIN)</label>
+                      <input
+                        type="text"
+                        required
+                        value={registerStudentIdInput}
+                        onChange={(e) => setRegisterStudentIdInput(e.target.value)}
+                        placeholder="請輸入學號"
+                        className="w-full px-3.5 py-2 rounded-xl border border-stone-200 focus:border-amber-600 outline-none text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={registerLoading || !registerRealNameInput.trim() || !registerStudentIdInput.trim()}
+                    className="w-full py-2.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs disabled:opacity-50"
+                  >
+                    {registerLoading ? '登記中…' : '完成登記並查詢紀錄'}
+                  </button>
+                </form>
+              )}
             </div>
 
             {submittedMemberPin && (
