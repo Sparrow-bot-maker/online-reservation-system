@@ -857,7 +857,11 @@ app.post('/api/admin/class-sessions', async (req, res) => {
     return;
   }
 
-  const sessionId = 'cls_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36).slice(-4);
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  let sessionId = '';
+  for (let i = 0; i < 10; i++) {
+    sessionId += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
   try {
     await sql`
       INSERT INTO class_sessions (id, name, date, is_open)

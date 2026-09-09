@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import QRCodeLib from 'qrcode';
 import {
   Calendar,
   Clock,
@@ -8,1559 +9,721 @@ import {
   AlertCircle,
   Shield,
   Lock,
-  Trash2,
-  ClipboardCheck,
-  KeyRound,
-  Settings,
   QrCode,
-  GraduationCap,
+  RefreshCw,
+  Dumbbell,
+  ClipboardList,
+  Search,
+  Award,
   Sparkles,
-  ExternalLink,
-  Copy,
   ChevronRight,
-  ArrowLeft,
+  GraduationCap,
+  Users,
+  Settings,
+  Trash2,
+  Copy,
   Check,
-  CalendarCheck2,
-  Flame,
-  Radio,
-  Share2
+  KeyRound,
+  ExternalLink,
 } from 'lucide-react';
-import QRCode from 'qrcode';
 
-// ─── 類型定義 ───────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 type Booking = {
   id: string;
   date: string;
-  time: string;
+  time: string; // "HH:MM - HH:MM"
   nickname: string;
-};
-
-type AdminBooking = Booking & {
   realName: string;
-  specificTime: string;
-  actualTime?: string;
-  attendance_status?: string;
-  note?: string;
-};
-
-type MemberRecord = {
-  id: string;
-  date: string;
-  time: string;
-  nickname: string;
-  specificTime: string;
-  actualTime?: string;
-};
-
-type MemberPin = {
-  realName: string;
-  pin: string;
+  studentId?: string;
   createdAt?: string;
 };
 
 type ClassSession = {
-  id: string;
+  id: string; // 10 位隨機英數組合代碼
   name: string;
   date: string;
   isOpen: boolean;
-  createdAt?: string;
-  attendees?: ClassAttendee[];
+  createdAt: string;
+  attendees: {
+    id: string;
+    studentId: string;
+    nickname: string;
+    realName: string;
+    checkedAt: string;
+  }[];
 };
 
-type ClassAttendee = {
-  id: number;
-  sessionId: string;
-  realName: string;
-  checkedAt: string;
-};
+// ─── Constants ───────────────────────────────────────────────────────────────
 
-type MemberClassRecord = {
-  id: number;
-  sessionId: string;
-  sessionName: string;
-  date: string;
-  checkedAt: string;
-};
+const MIN_DURATION_MINS = 120; // 加練需滿 2 小時
 
-// ─── 工具常數與函式 ──────────────────────────────────────────
+const PRACTICE_RANGES = [
+  { label: '上午時段 (09:00 - 12:00)', start: 9 * 60, end: 12 * 60 },
+  { label: '下午時段 (14:00 - 19:00)', start: 14 * 60, end: 19 * 60 },
+];
 
-const isWeekend = (dateString: string) => {
-  const d = new Date(dateString + 'T00:00:00Z');
-  const day = d.getUTCDay();
-  return day === 0 || day === 6;
-};
+// Drum Roll 可選刻度（09:00-12:00 / 14:00-19:00，每 15 分鐘）
+const PRACTICE_TIMES = (() => {
+  const times: string[] = [];
+  const addRange = (startH: number, endH: number) => {
+    for (let h = startH; h <= endH; h++) {
+      for (let m = 0; m < 60; m += 15) {
+        if (h === endH && m > 0) break;
+        times.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+      }
+    }
+  };
+  addRange(9, 12);
+  addRange(14, 19);
+  return times;
+})();
 
-const isFriday = (dateString: string) => {
-  const d = new Date(dateString + 'T00:00:00Z');
-  return d.getUTCDay() === 5;
-};
+// ─── Helper Functions ────────────────────────────────────────────────────────
 
-const MORNING_TIME_SLOT = '06:00 - 08:00';
-const MORNING_SPECIFIC_TIME = '06:00~08:00';
-const SHOW_MORNING_TRAINING = false; // 目前無晨練功能，前台暫時隱藏（功能與邏輯仍完整保留）
-
-const getTimeSlots = (dateString: string) => {
-  if (isWeekend(dateString)) {
-    return ['09:00 - 12:00', '14:00 - 18:00'];
+/** 隨機生成 10 位英數字元組合代碼 */
+const generate10CharSessionCode = (): string => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  let result = '';
+  for (let i = 0; i < 10; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return ['09:00 - 12:00', '14:00 - 19:00'];
+  return result;
 };
 
 const generateDates = () => {
   const dates = [];
-  const now = new Date();
-  const twNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  const todayStr = twNow.toISOString().split('T')[0];
+  const today = new Date();
   for (let i = 0; i < 4; i++) {
-    const base = new Date(`${todayStr}T00:00:00Z`);
-    const d = new Date(base.getTime() + i * 86400000);
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
     const dateString = d.toISOString().split('T')[0];
-    const displayString = `${d.getUTCMonth() + 1}/${d.getUTCDate()} (${['日', '一', '二', '三', '四', '五', '六'][d.getUTCDay()]})`;
+    const displayString = `${d.getMonth() + 1}/${d.getDate()} (${
+      ['日', '一', '二', '三', '四', '五', '六'][d.getDay()]
+    })`;
     dates.push({ value: dateString, display: displayString });
   }
   return dates;
 };
 
-function getTodayTW(): string {
-  const now = new Date();
-  const tw = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  return tw.toISOString().split('T')[0];
+const timeToMins = (t: string) => {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+};
+
+const getRiderTitle = (count: number) => {
+  if (count === 0) return { title: '馬術新手', color: 'text-stone-500', bg: 'bg-stone-100', border: 'border-stone-200' };
+  if (count <= 2) return { title: '見習騎手 🐎', color: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200' };
+  if (count <= 5) return { title: '熟練騎士 🏇', color: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-200' };
+  if (count <= 9) return { title: '菁英騎手 🌟', color: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200' };
+  return { title: '榮譽馬術大師 👑', color: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-200' };
+};
+
+const validatePracticeTime = (start: string, end: string): string | null => {
+  const s = timeToMins(start);
+  const e = timeToMins(end);
+  if (e <= s) return '結束時間必須晚於開始時間';
+  if (e - s < MIN_DURATION_MINS) {
+    const diff = e - s;
+    return `加練時長需至少滿 2 小時（目前為 ${Math.floor(diff / 60)} 小時 ${diff % 60 ? `${diff % 60} 分鐘` : ''}）`;
+  }
+  for (const range of PRACTICE_RANGES) {
+    if (s >= range.start && s < range.end) {
+      if (e > range.end) {
+        const endStr = `${String(Math.floor(range.end / 60)).padStart(2, '0')}:00`;
+        return `此時段之加練需在 ${endStr} 前結束（不可跨越午休或閉館時段）`;
+      }
+      return null;
+    }
+  }
+  return '開始時間必須在 09:00–12:00 或 14:00–19:00 規定時段內';
+};
+
+// ─── DrumRollPicker Component ────────────────────────────────────────────────
+
+const ITEM_H = 48;
+const VISIBLE = 5;
+
+function DrumRollPicker({
+  items,
+  value,
+  onChange,
+}: {
+  items: string[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const scrollTo = useCallback((idx: number, smooth = true) => {
+    const el = ref.current;
+    if (!el) return;
+    if (smooth) el.scrollTo({ top: idx * ITEM_H, behavior: 'smooth' });
+    else el.scrollTop = idx * ITEM_H;
+  }, []);
+
+  useEffect(() => {
+    const idx = items.indexOf(value);
+    if (idx >= 0) scrollTo(idx, false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const idx = items.indexOf(value);
+    if (idx >= 0) scrollTo(idx);
+  }, [value, scrollTo, items]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onScroll = () => {
+      clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        const idx = Math.max(0, Math.min(Math.round(el.scrollTop / ITEM_H), items.length - 1));
+        scrollTo(idx);
+        onChange(items[idx]);
+      }, 90);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      clearTimeout(timerRef.current);
+    };
+  }, [items, onChange, scrollTo]);
+
+  return (
+    <div
+      className="relative overflow-hidden rounded-2xl bg-stone-50 border border-stone-200/80 shadow-inner"
+      style={{ height: ITEM_H * VISIBLE }}
+    >
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-stone-50 via-stone-50/80 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-20 bg-gradient-to-t from-stone-50 via-stone-50/80 to-transparent" />
+
+      <div
+        className="pointer-events-none absolute inset-x-2.5 z-10 rounded-xl border-2 border-amber-500/80 bg-amber-500/10 shadow-sm"
+        style={{ top: ITEM_H * 2, height: ITEM_H }}
+      />
+
+      <div ref={ref} className="h-full overflow-y-scroll" style={{ scrollbarWidth: 'none' }}>
+        <div style={{ height: ITEM_H * 2 }} />
+        {items.map((item) => (
+          <div
+            key={item}
+            style={{ height: ITEM_H }}
+            className={`flex items-center justify-center text-xl font-bold cursor-pointer select-none transition-all duration-150 ${
+              item === value ? 'text-amber-700 scale-105' : 'text-stone-400 hover:text-stone-600'
+            }`}
+            onClick={() => {
+              scrollTo(items.indexOf(item));
+              onChange(item);
+            }}
+          >
+            {item}
+          </div>
+        ))}
+        <div style={{ height: ITEM_H * 2 }} />
+      </div>
+    </div>
+  );
 }
 
+// ─── Main App Component ──────────────────────────────────────────────────────
+
 export default function App() {
-  const [dates, setDates] = useState(generateDates());
-  const [selectedDate, setSelectedDate] = useState(() => generateDates()[0].value);
+  const [dates] = useState(generateDates);
+  const [selectedDate, setSelectedDate] = useState(dates[0].value);
 
-  // 跨日檢查
-  useEffect(() => {
-    const check = () => {
-      const newDates = generateDates();
-      setDates((prev) => {
-        if (prev[0].value !== newDates[0].value) {
-          setSelectedDate(newDates[0].value);
-          return newDates;
-        }
-        return prev;
-      });
-    };
-    const timer = setInterval(check, 60_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // ─── 路由與視圖切換 ────────────────────────────────────────
-  const [view, setView] = useState<'user' | 'admin' | 'member' | 'class-checkin'>('user');
-  const [userTab, setUserTab] = useState<'booking' | 'class'>('booking');
-  const [urlSessionId, setUrlSessionId] = useState<string | null>(null);
-
-  // 檢查 URL 中的社課點名 session (支援 query string 與 hash)
-  useEffect(() => {
-    const handleUrlRoute = () => {
-      const hash = window.location.hash;
-      const search = window.location.search;
-      let sessionParam: string | null = null;
-
-      if (hash.includes('session=')) {
-        const match = hash.match(/session=([^&]+)/);
-        if (match) sessionParam = match[1];
-      } else if (search.includes('session=')) {
-        const params = new URLSearchParams(search);
-        sessionParam = params.get('session');
-      }
-
-      if (sessionParam) {
-        setUrlSessionId(sessionParam);
-        setView('class-checkin');
-      }
-    };
-
-    handleUrlRoute();
-    window.addEventListener('hashchange', handleUrlRoute);
-    return () => window.removeEventListener('hashchange', handleUrlRoute);
-  }, []);
-
-  // ─── 預約與時段 State ───────────────────────────────────────
+  // 預約資料
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [myBookings, setMyBookings] = useState<Booking[]>([]);
-  const [myBookingIds, setMyBookingIds] = useState<string[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('app_my_booking_ids') ?? '[]');
-    } catch {
-      return [];
-    }
-  });
-  const [loading, setLoading] = useState(false);
-  const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+  const [myBookingIds, setMyBookingIds] = useState<string[]>([]);
+  const [practiceStart, setPracticeStart] = useState('09:00');
+  const [practiceEnd, setPracticeEnd] = useState('11:00');
+  const [practiceError, setPracticeError] = useState('');
 
-  const [showModal, setShowModal] = useState(false);
-  const [bookingSlot, setBookingSlot] = useState<{ date: string; time: string } | null>(null);
-  const [formData, setFormData] = useState({ nickname: '', realName: '', specificTime: '' });
-  const [timeError, setTimeError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [morningTraining, setMorningTraining] = useState(false);
-
-  // ─── 加練點名 Modal State ───────────────────────────────────
-  const [checkinBookingId, setCheckinBookingId] = useState<string | null>(null);
-  const [checkinPassword, setCheckinPassword] = useState('');
-  const [checkinLoading, setCheckinLoading] = useState(false);
-  const [checkinError, setCheckinError] = useState('');
-  const [checkinSuccess, setCheckinSuccess] = useState<string | null>(null);
-
-  // ─── 時間處理工具 ───────────────────────────────────────────
-  const sanitizeTime = (timeStr: string): string => {
-    let sanitized = timeStr.replace(/\s+/g, '');
-    sanitized = sanitized.replace(/：/g, ':').replace(/[～\-]/g, '~');
-    sanitized = sanitized.replace(/(^|~)(\d):/g, '$10$2:');
-    return sanitized;
-  };
-
-  const isSpecificTimeAllowed = (mainTime: string, specificTime: string): boolean => {
-    const cleanMain = sanitizeTime(mainTime);
-    const [mStart, mEnd] = cleanMain.split('~');
-    const [sStart, sEnd] = specificTime.split('~');
-
-    if (!mStart || !mEnd || !sStart || !sEnd) return false;
-
-    const validateHMS = (time: string) => {
-      const parts = time.split(':');
-      if (parts.length !== 2) return NaN;
-      return Number(parts[0]) * 60 + Number(parts[1]);
-    };
-
-    const mS = validateHMS(mStart);
-    let mE = validateHMS(mEnd);
-    const sS = validateHMS(sStart);
-    let sE = validateHMS(sEnd);
-
-    if (isNaN(mS) || isNaN(mE) || isNaN(sS) || isNaN(sE)) return false;
-    if (mE < mS) mE += 1440;
-
-    let adjustedSS = sS;
-    let adjustedSE = sE;
-    if (sS < mS && mS > 12 * 60) adjustedSS += 1440;
-    if (sE < sS || adjustedSS > adjustedSE) adjustedSE += 1440;
-
-    return adjustedSS >= mS && adjustedSE <= mE;
-  };
-
-  const validateDuration = (sanitizedValue: string): boolean => {
-    const match = sanitizedValue.match(/^(\d{2}):(\d{2})~(\d{2}):(\d{2})$/);
-    if (!match) return false;
-    const [, sh, sm, eh, em] = match.map(Number);
-    const start = sh * 60 + sm;
-    let end = eh * 60 + em;
-    if (end < start) end += 24 * 60;
-    return end - start >= 120;
-  };
-
-  const calculateHours = (timeStr: string, actualTimeStr?: string): number => {
-    const target = actualTimeStr || timeStr;
-    try {
-      if (!target) return 0;
-      const clean = sanitizeTime(target);
-      const match = clean.match(/^(\d{2}):(\d{2})~(\d{2}):(\d{2})$/);
-      if (!match) return 0;
-      const [, sh, sm, eh, em] = match.map(Number);
-      let durationMs = eh * 60 + em - (sh * 60 + sm);
-      if (durationMs < 0) durationMs += 24 * 60;
-      const rawHours = durationMs / 60;
-      // 無條件進位至小數點後第二位 (例: 12.3333 -> 12.34)
-      return Math.ceil(rawHours * 100) / 100;
-    } catch {
-      return 0;
-    }
-  };
-
-  const formatHours = (hours: number): string => {
-    const rounded = Math.ceil(hours * 100) / 100;
-    return rounded.toString();
-  };
-
-  // ─── 管理員 States ──────────────────────────────────────────
-  const [isAdminAuth, setIsAdminAuth] = useState(false);
-  const [adminPassword, setAdminPassword] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
-  const [adminBookings, setAdminBookings] = useState<AdminBooking[]>([]);
-  const [adminTab, setAdminTab] = useState<'overview' | 'members' | 'classes' | 'settings'>('overview');
-  const [memberSearch, setMemberSearch] = useState('');
-  const [selectedMember, setSelectedMember] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [confirmDeleteMember, setConfirmDeleteMember] = useState(false);
-  const [confirmClearAbsent, setConfirmClearAbsent] = useState(false);
-
-  // 管理員設定
-  const [memberPins, setMemberPins] = useState<MemberPin[]>([]);
-  const [newPinName, setNewPinName] = useState('');
-  const [newPinCode, setNewPinCode] = useState('');
-  const [pinSubmitting, setPinSubmitting] = useState(false);
-  const [checkinPwdDisplay, setCheckinPwdDisplay] = useState('');
-  const [newCheckinPwd, setNewCheckinPwd] = useState('');
-  const [checkinPwdSubmitting, setCheckinPwdSubmitting] = useState(false);
-  const [confirmDeletePin, setConfirmDeletePin] = useState<string | null>(null);
-
-  // 管理員社課場次管理
-  const [adminClassSessions, setAdminClassSessions] = useState<ClassSession[]>([]);
+  // 社課場次資料 (支援 10 位隨機代碼)
+  const [classSessions, setClassSessions] = useState<ClassSession[]>([]);
   const [newClassName, setNewClassName] = useState('');
-  const [newClassDate, setNewClassDate] = useState(getTodayTW());
-  const [creatingClass, setCreatingClass] = useState(false);
-  const [activeQrSession, setActiveQrSession] = useState<ClassSession | null>(null);
-  const [activeAttendeesSession, setActiveAttendeesSession] = useState<ClassSession | null>(null);
-  const [copiedLink, setCopiedLink] = useState(false);
-  // 學期結算清空 State
-  const [showClearAllModal, setShowClearAllModal] = useState(false);
-  const [clearAllConfirmText, setClearAllConfirmText] = useState('');
-  const [clearingAll, setClearingAll] = useState(false);
+  const [newClassDate, setNewClassDate] = useState(new Date().toISOString().split('T')[0]);
 
-  // ─── 社員個人紀錄 States ────────────────────────────────────
-  const [memberMode, setMemberMode] = useState<'login' | 'register'>('login');
-  const [memberPin, setMemberPin] = useState(() => localStorage.getItem('saved_member_pin') ?? '');
-  const [memberPinInput, setMemberPinInput] = useState('');
-  const [memberRegisterName, setMemberRegisterName] = useState('');
-  const [memberRealName, setMemberRealName] = useState('');
-  const [memberRecords, setMemberRecords] = useState<MemberRecord[]>([]);
-  const [memberClassRecords, setMemberClassRecords] = useState<MemberClassRecord[]>([]);
-  const [memberLoginError, setMemberLoginError] = useState('');
-  const [memberLoading, setMemberLoading] = useState(false);
-
-  // ─── 社課點名獨立頁面 States ────────────────────────────────
-  const [classSessionData, setClassSessionData] = useState<ClassSession | null>(null);
-  const [classCheckinPin, setClassCheckinPin] = useState('');
-  const [classCheckinLoading, setClassCheckinLoading] = useState(false);
-  const [classCheckinResult, setClassCheckinResult] = useState<{ success: boolean; message: string; realName?: string } | null>(null);
+  // 手動輸入場次代碼
   const [manualSessionIdInput, setManualSessionIdInput] = useState('');
 
-  // ─── 儲存我的預約 ID ────────────────────────────────────────
+  // 學生端 Tab
+  const [userTab, setUserTab] = useState<'加練' | '社課點名' | '出席紀錄'>('社課點名');
+  const [attendanceQuery, setAttendanceQuery] = useState('');
+
+  // 預約 Modal
+  const [showModal, setShowModal] = useState(false);
+  const [bookingSlot, setBookingSlot] = useState<{ date: string; time: string } | null>(null);
+  const [formData, setFormData] = useState({ nickname: '', realName: '', studentId: '' });
+
+  // 幹部後台 State
+  const [view, setView] = useState<'user' | 'admin' | 'class-checkin'>('user');
+  const [isAdminAuth, setIsAdminAuth] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [adminTab, setAdminTab] = useState<'overview' | 'classes' | 'members' | 'settings'>('classes');
+
+  // 後台專用 Modal (QR Code / 簽到名冊)
+  const [activeQrSession, setActiveQrSession] = useState<ClassSession | null>(null);
+  const [qrModalDataUrl, setQrModalDataUrl] = useState('');
+  const [copiedSessionId, setCopiedSessionId] = useState<string | null>(null);
+  const [activeAttendeesSession, setActiveAttendeesSession] = useState<ClassSession | null>(null);
+
+  // 點名簽到頁面 State
+  const [currentCheckinSessionId, setCurrentCheckinSessionId] = useState<string | null>(null);
+  const [checkinForm, setCheckinForm] = useState({ studentId: '', nickname: '', realName: '' });
+  const [checkinSuccessMsg, setCheckinSuccessMsg] = useState<string | null>(null);
+  const [checkinErrorMsg, setCheckinErrorMsg] = useState<string | null>(null);
+
+  // ── 初始讀取與持久化 ──
   useEffect(() => {
-    localStorage.setItem('app_my_booking_ids', JSON.stringify(myBookingIds));
+    const savedBookings = localStorage.getItem('equestrian_bookings');
+    if (savedBookings) setBookings(JSON.parse(savedBookings));
+
+    const savedMyIds = localStorage.getItem('equestrian_my_ids');
+    if (savedMyIds) setMyBookingIds(JSON.parse(savedMyIds));
+
+    const savedSessions = localStorage.getItem('equestrian_class_sessions');
+    if (savedSessions) {
+      setClassSessions(JSON.parse(savedSessions));
+    } else {
+      // 預設示範場次
+      const initialSession: ClassSession = {
+        id: generate10CharSessionCode(),
+        name: '正課理論與上下馬安全',
+        date: new Date().toISOString().split('T')[0],
+        isOpen: true,
+        createdAt: new Date().toLocaleTimeString('zh-TW'),
+        attendees: [],
+      };
+      setClassSessions([initialSession]);
+    }
+
+    // 支援直接透過 URL 參數進入點名： ?session=xxxxxx 或 #/class-checkin?session=xxxxxx
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionParam = urlParams.get('session');
+    if (sessionParam) {
+      setCurrentCheckinSessionId(sessionParam.trim());
+      setView('class-checkin');
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('equestrian_bookings', JSON.stringify(bookings));
+  }, [bookings]);
+
+  useEffect(() => {
+    localStorage.setItem('equestrian_my_ids', JSON.stringify(myBookingIds));
   }, [myBookingIds]);
 
-  // ─── 取得預約 ───────────────────────────────────────────────
-  const fetchBookings = useCallback(async (date: string) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/bookings?date=${date}`);
-      if (res.ok) setBookings(await res.json());
-    } catch (err) {
-      console.error('取得預約失敗', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const fetchMyBookings = useCallback(async (ids: string[]) => {
-    if (ids.length === 0) {
-      setMyBookings([]);
-      return;
-    }
-    try {
-      const allDates = generateDates().map((d) => d.value);
-      const results = await Promise.all(
-        allDates.map((d) => fetch(`/api/bookings?date=${d}`).then((r) => r.json()))
-      );
-      const allBookings: Booking[] = results.flat();
-      setMyBookings(allBookings.filter((b) => ids.includes(b.id)));
-    } catch (err) {
-      console.error('取得我的預約失敗', err);
-    }
-  }, []);
-
   useEffect(() => {
-    fetchMyBookings(myBookingIds);
-  }, [myBookingIds, fetchMyBookings]);
+    localStorage.setItem('equestrian_class_sessions', JSON.stringify(classSessions));
+  }, [classSessions]);
 
+  // 產生 QR Code 圖片
   useEffect(() => {
-    if (view === 'user' && userTab === 'booking') {
-      fetchBookings(selectedDate);
+    if (activeQrSession) {
+      const checkinUrl = `${window.location.origin}${window.location.pathname}?session=${activeQrSession.id}`;
+      QRCodeLib.toDataURL(checkinUrl, {
+        width: 320,
+        margin: 2,
+        color: { dark: '#1c1917', light: '#ffffff' },
+      }).then(setQrModalDataUrl);
+    } else {
+      setQrModalDataUrl('');
     }
-  }, [selectedDate, view, userTab, fetchBookings]);
+  }, [activeQrSession]);
 
-  // ─── 管理員 API ────────────────────────────────────────────
-  const fetchAdminBookings = useCallback(async (password: string) => {
-    try {
-      const res = await fetch('/api/admin/bookings', {
-        headers: { 'x-admin-password': password },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setAdminBookings(data);
-      } else {
-        alert('密碼錯誤！');
-      }
-    } catch (err) {
-      console.error('管理員查詢失敗', err);
-    }
-  }, []);
-
-  const fetchAdminClasses = useCallback(async (password: string) => {
-    try {
-      const res = await fetch('/api/admin/class-sessions', {
-        headers: { 'x-admin-password': password },
-      });
-      if (res.ok) {
-        setAdminClassSessions(await res.json());
-      }
-    } catch (err) {
-      console.error('取得社課場次失敗', err);
-    }
-  }, []);
-
-  const fetchMemberPins = useCallback(async (pwd: string) => {
-    try {
-      const res = await fetch('/api/admin/member-pins', {
-        headers: { 'x-admin-password': pwd },
-      });
-      if (res.ok) setMemberPins(await res.json());
-    } catch (err) {
-      console.error(err);
-    }
-  }, []);
-
-  const fetchCheckinPassword = useCallback(async (pwd: string) => {
-    try {
-      const res = await fetch('/api/admin/checkin-password', {
-        headers: { 'x-admin-password': pwd },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCheckinPwdDisplay(data.checkinPassword);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (isAdminAuth) {
-      if (adminTab === 'overview') {
-        fetchAdminBookings(adminPassword);
-      } else if (adminTab === 'members') {
-        fetchAdminBookings(adminPassword);
-        fetchMemberPins(adminPassword);
-        fetchAdminClasses(adminPassword);
-      } else if (adminTab === 'classes') {
-        fetchAdminClasses(adminPassword);
-      } else if (adminTab === 'settings') {
-        fetchMemberPins(adminPassword);
-        fetchCheckinPassword(adminPassword);
-      }
-    }
-  }, [adminTab, isAdminAuth, adminPassword, fetchAdminBookings, fetchAdminClasses, fetchMemberPins, fetchCheckinPassword]);
-
-  // 學期末一鍵清空所有資料
-  const handleClearAllSemesterData = async () => {
-    if (clearAllConfirmText.trim() !== '確認清空') return;
-    setClearingAll(true);
-    try {
-      const res = await fetch('/api/admin/clear-all-data', {
-        method: 'DELETE',
-        headers: { 'x-admin-password': adminPassword },
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setAdminBookings([]);
-        setMemberPins([]);
-        setAdminClassSessions([]);
-        setSelectedMember(null);
-        setShowClearAllModal(false);
-        setClearAllConfirmText('');
-        alert(data.message ?? '學期資料已成功重置清空！');
-      } else {
-        alert(data.error ?? '清空失敗');
-      }
-    } catch (err) {
-      alert('網路連線錯誤');
-    } finally {
-      setClearingAll(false);
-    }
-  };
-
-  // ─── 社員登入與查詢 ─────────────────────────────────────────
-  const loginWithPin = useCallback(async (pin: string) => {
-    setMemberLoading(true);
-    try {
-      const [statsRes, classRes] = await Promise.all([
-        fetch('/api/member/stats', { headers: { 'x-member-pin': pin } }),
-        fetch('/api/member/class-stats', { headers: { 'x-member-pin': pin } })
-      ]);
-
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setMemberRealName(statsData.realName);
-        setMemberRecords(statsData.records);
-        setMemberPin(pin);
-        localStorage.setItem('saved_member_pin', pin);
-      }
-      if (classRes.ok) {
-        const classData = await classRes.json();
-        setMemberClassRecords(classData.records);
-      }
-    } catch (err) {
-      console.error('加載社員紀錄失敗', err);
-    } finally {
-      setMemberLoading(false);
-    }
-  }, []);
-
-  // 自動以 localStorage 的 PIN 登入
-  useEffect(() => {
-    if (memberPin && !memberRealName) {
-      loginWithPin(memberPin);
-    }
-  }, [memberPin, memberRealName, loginWithPin]);
-
-  const handleMemberLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMemberLoginError('');
-    setMemberLoading(true);
-    try {
-      const res = await fetch('/api/member/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: memberPinInput.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setMemberLoginError(data.error ?? '學號錯誤，請重試');
-        return;
-      }
-      await loginWithPin(memberPinInput.trim());
-      setMemberPinInput('');
-    } catch (err) {
-      setMemberLoginError('網路錯誤，請重試');
-    } finally {
-      setMemberLoading(false);
-    }
-  };
-
-  const handleMemberRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMemberLoginError('');
-    setMemberLoading(true);
-    try {
-      const res = await fetch('/api/member/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ realName: memberRegisterName.trim(), pin: memberPinInput.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setMemberLoginError(data.error ?? '設定失敗，請重試');
-        return;
-      }
-      await loginWithPin(memberPinInput.trim());
-      setMemberPinInput('');
-      setMemberRegisterName('');
-    } catch (err) {
-      setMemberLoginError('網路錯誤，請重試');
-    } finally {
-      setMemberLoading(false);
-    }
-  };
-
-  const handleMemberLogout = () => {
-    setMemberPin('');
-    setMemberRealName('');
-    setMemberRecords([]);
-    setMemberClassRecords([]);
-    setMemberPinInput('');
-    setMemberRegisterName('');
-    setMemberLoginError('');
-    setMemberMode('login');
-    localStorage.removeItem('saved_member_pin');
-  };
-
-  // ─── 加練線上點名 ───────────────────────────────────────────
-  const handleCheckin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!checkinBookingId || !checkinPassword.trim()) return;
-    setCheckinLoading(true);
-    setCheckinError('');
-    try {
-      const res = await fetch(`/api/bookings/${checkinBookingId}/checkin`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ checkinPassword: checkinPassword.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setCheckinError(data.error ?? '點名失敗');
-        return;
-      }
-      setCheckinSuccess(checkinBookingId);
-      setCheckinBookingId(null);
-      setCheckinPassword('');
-      // 即時重新整理當前畫面預約資料
-      fetchBookings(selectedDate);
-    } catch (err) {
-      setCheckinError('網路錯誤，請重試');
-    } finally {
-      setCheckinLoading(false);
-    }
-  };
-
-  // ─── 社課掃碼點名流程 ───────────────────────────────────────
-  const loadClassSessionInfo = useCallback(async (sessionId: string) => {
-    setClassCheckinLoading(true);
-    try {
-      const res = await fetch(`/api/class/session/${sessionId}`);
-      const data = await res.json();
-      if (res.ok) {
-        setClassSessionData(data);
-      } else {
-        setClassCheckinResult({ success: false, message: data.error ?? '無效的社課點名連結' });
-      }
-    } catch (err) {
-      setClassCheckinResult({ success: false, message: '網路連線失敗，請檢查網路' });
-    } finally {
-      setClassCheckinLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (urlSessionId) {
-      loadClassSessionInfo(urlSessionId);
-    }
-  }, [urlSessionId, loadClassSessionInfo]);
-
-  const handleClassCheckinSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!urlSessionId || !classCheckinPin.trim()) return;
-    setClassCheckinLoading(true);
-    setClassCheckinResult(null);
-    try {
-      const res = await fetch(`/api/class/session/${urlSessionId}/checkin`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: classCheckinPin.trim() }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setClassCheckinResult({
-          success: true,
-          message: data.message,
-          realName: data.realName,
-        });
-        // 若該裝置已登入同個 PIN，同步更新紀錄
-        if (memberPin === classCheckinPin.trim()) {
-          loginWithPin(memberPin);
-        }
-      } else {
-        setClassCheckinResult({
-          success: false,
-          message: data.error ?? '點名失敗',
-          realName: data.realName,
-        });
-      }
-    } catch (err) {
-      setClassCheckinResult({ success: false, message: '網路連線錯誤，請稍後重試' });
-    } finally {
-      setClassCheckinLoading(false);
-    }
-  };
-
-  // ─── 管理員操作社課場次 ─────────────────────────────────────
-  const handleCreateClassSession = async (e: React.FormEvent) => {
+  // ── 建立新社課場次（隨機 10 位英數代碼）──
+  const handleCreateClassSession = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClassName.trim() || !newClassDate.trim()) return;
-    setCreatingClass(true);
-    try {
-      const res = await fetch('/api/admin/class-sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
-        body: JSON.stringify({ name: newClassName.trim(), date: newClassDate.trim() }),
-      });
-      if (res.ok) {
-        setNewClassName('');
-        await fetchAdminClasses(adminPassword);
-      } else {
-        alert('建立失敗');
-      }
-    } catch (err) {
-      alert('網路錯誤');
-    } finally {
-      setCreatingClass(false);
+
+    // 隨機產生 10 位英文數字組合代碼
+    const random10Code = generate10CharSessionCode();
+
+    const newSession: ClassSession = {
+      id: random10Code,
+      name: newClassName.trim(),
+      date: newClassDate.trim(),
+      isOpen: true,
+      createdAt: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }),
+      attendees: [],
+    };
+
+    setClassSessions((prev) => [newSession, ...prev]);
+    setNewClassName('');
+    alert(`社課場次已成功建立！\n場次代碼：${random10Code}`);
+  };
+
+  const handleToggleClassOpen = (sessionId: string, currentStatus: boolean) => {
+    setClassSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? { ...s, isOpen: !currentStatus } : s))
+    );
+  };
+
+  const handleDeleteClassSession = (sessionId: string) => {
+    if (window.confirm('確定要刪除此社課場次嗎？此操作無法復原。')) {
+      setClassSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      if (activeQrSession?.id === sessionId) setActiveQrSession(null);
+      if (activeAttendeesSession?.id === sessionId) setActiveAttendeesSession(null);
     }
   };
 
-  const handleToggleClassOpen = async (id: string, currentOpen: boolean) => {
-    try {
-      const res = await fetch(`/api/admin/class-sessions/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
-        body: JSON.stringify({ isOpen: !currentOpen }),
-      });
-      if (res.ok) {
-        setAdminClassSessions((prev) =>
-          prev.map((s) => (s.id === id ? { ...s, isOpen: !currentOpen } : s))
-        );
-      }
-    } catch (err) {
-      alert('切換失敗');
+  // ── 學生前往手動輸入點名 ──
+  const handleManualSessionGo = () => {
+    const code = manualSessionIdInput.trim();
+    if (!code) {
+      alert('請輸入場次代碼！');
+      return;
     }
+    const targetSession = classSessions.find((s) => s.id.toLowerCase() === code.toLowerCase());
+    if (!targetSession) {
+      alert(`找不到場次代碼為「${code}」的社課場次，請確認代碼是否正確。`);
+      return;
+    }
+    setCurrentCheckinSessionId(targetSession.id);
+    setView('class-checkin');
   };
 
-  const handleDeleteClassSession = async (id: string) => {
-    if (!window.confirm('確定要刪除此社課場次及所有出席名冊？無法復原！')) return;
-    try {
-      const res = await fetch(`/api/admin/class-sessions/${id}`, {
-        method: 'DELETE',
-        headers: { 'x-admin-password': adminPassword },
-      });
-      if (res.ok) {
-        setAdminClassSessions((prev) => prev.filter((s) => s.id !== id));
-        if (activeQrSession?.id === id) setActiveQrSession(null);
-        if (activeAttendeesSession?.id === id) setActiveAttendeesSession(null);
-      }
-    } catch (err) {
-      alert('刪除失敗');
+  // ── 學生完成點名提交 ──
+  const handleCheckinSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCheckinErrorMsg(null);
+
+    const session = classSessions.find((s) => s.id === currentCheckinSessionId);
+    if (!session) {
+      setCheckinErrorMsg('找不到此社課場次或場次已被移除');
+      return;
     }
+    if (!session.isOpen) {
+      setCheckinErrorMsg('此社課場次點名已關閉，請向現場幹部反映。');
+      return;
+    }
+
+    const { studentId, nickname, realName } = checkinForm;
+    if (!studentId.trim() || !nickname.trim() || !realName.trim()) {
+      setCheckinErrorMsg('請完整填寫學號、綽號與真實姓名！');
+      return;
+    }
+
+    // 檢查是否已重複簽到
+    const already = session.attendees.some(
+      (a) => a.studentId.toLowerCase() === studentId.trim().toLowerCase()
+    );
+    if (already) {
+      setCheckinErrorMsg(`學號 ${studentId.trim()} 已經在此場次簽到過囉！`);
+      return;
+    }
+
+    const newAttendee = {
+      id: Math.random().toString(36).substring(2, 9),
+      studentId: studentId.trim(),
+      nickname: nickname.trim(),
+      realName: realName.trim(),
+      checkedAt: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    setClassSessions((prev) =>
+      prev.map((s) =>
+        s.id === session.id ? { ...s, attendees: [newAttendee, ...s.attendees] } : s
+      )
+    );
+
+    setCheckinSuccessMsg(`簽到成功！歡迎參加【${session.name}】🐴`);
+    setCheckinForm({ studentId: '', nickname: '', realName: '' });
   };
 
-  const handleDeleteAttendee = async (attendeeId: number) => {
-    try {
-      const res = await fetch(`/api/admin/class-attendance/${attendeeId}`, {
-        method: 'DELETE',
-        headers: { 'x-admin-password': adminPassword },
-      });
-      if (res.ok) {
-        setAdminClassSessions((prev) =>
-          prev.map((s) => ({
-            ...s,
-            attendees: s.attendees?.filter((a) => a.id !== attendeeId),
-          }))
-        );
-        if (activeAttendeesSession) {
-          setActiveAttendeesSession((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  attendees: prev.attendees?.filter((a) => a.id !== attendeeId),
-                }
-              : null
-          );
-        }
-      }
-    } catch (err) {
-      alert('刪除失敗');
+  // ── 加練預約提交 ──
+  const handlePracticeBookClick = () => {
+    const error = validatePracticeTime(practiceStart, practiceEnd);
+    if (error) {
+      setPracticeError(error);
+      return;
     }
-  };
-
-  // ─── 預約與表單處理 ─────────────────────────────────────────
-  const handleBookClick = (date: string, time: string) => {
-    setMorningTraining(false);
-    setBookingSlot({ date, time });
+    setPracticeError('');
+    setBookingSlot({ date: selectedDate, time: `${practiceStart} - ${practiceEnd}` });
     setShowModal(true);
   };
 
-  const handleMorningTrainingClick = (date: string) => {
-    setMorningTraining(true);
-    setBookingSlot({ date, time: MORNING_TIME_SLOT });
-    setFormData({ nickname: '', realName: '', specificTime: MORNING_SPECIFIC_TIME });
-    setTimeError('');
-    setShowModal(true);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleBookingSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bookingSlot || !formData.nickname || !formData.realName) return;
+    if (!bookingSlot || !formData.nickname.trim() || !formData.realName.trim()) return;
 
-    if (morningTraining) {
-      setSubmitting(true);
-      try {
-        const res = await fetch('/api/bookings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            date: bookingSlot.date,
-            time: MORNING_TIME_SLOT,
-            nickname: formData.nickname,
-            realName: formData.realName,
-            specificTime: MORNING_SPECIFIC_TIME,
-            isMorningTraining: true,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          alert(data.error ?? '預約失敗，請重試');
-          return;
-        }
-        setMyBookingIds((prev) => [...prev, data.id]);
-        await fetchBookings(selectedDate);
-        setFormData({ nickname: '', realName: '', specificTime: '' });
-        setShowModal(false);
-        setBookingSlot(null);
-        setMorningTraining(false);
-      } catch (err) {
-        alert('網路錯誤，請重試');
-      } finally {
-        setSubmitting(false);
-      }
-      return;
-    }
+    const newBooking: Booking = {
+      id: Math.random().toString(36).substring(2, 9),
+      date: bookingSlot.date,
+      time: bookingSlot.time,
+      nickname: formData.nickname.trim(),
+      realName: formData.realName.trim(),
+      studentId: formData.studentId.trim(),
+      createdAt: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }),
+    };
 
-    if (!formData.specificTime) return;
-    const sanitizedTime = sanitizeTime(formData.specificTime);
+    setBookings((prev) => [newBooking, ...prev]);
+    setMyBookingIds((prev) => [newBooking.id, ...prev]);
+    setFormData({ nickname: '', realName: '', studentId: '' });
+    setShowModal(false);
+    setBookingSlot(null);
+  };
 
-    if (!validateDuration(sanitizedTime)) {
-      setTimeError('加練時間需至少 2 小時，格式請填如：14:00~16:00');
-      return;
-    }
-
-    if (!isSpecificTimeAllowed(bookingSlot.time, sanitizedTime)) {
-      if (isWeekend(bookingSlot.date) && bookingSlot.time === '14:00 - 18:00') {
-        setTimeError('週末下午時段僅開放至 18:00，且預約需滿 2 小時。');
-      } else {
-        setTimeError('您填寫的時間不在選擇的時段範圍內。');
-      }
-      return;
-    }
-
-    setTimeError('');
-    setSubmitting(true);
-    try {
-      const res = await fetch('/api/bookings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date: bookingSlot.date,
-          time: bookingSlot.time,
-          nickname: formData.nickname,
-          realName: formData.realName,
-          specificTime: sanitizedTime,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error ?? '預約失敗，請重試');
-        return;
-      }
-      setMyBookingIds((prev) => [...prev, data.id]);
-      await fetchBookings(selectedDate);
-      setFormData({ nickname: '', realName: '', specificTime: '' });
-      setTimeError('');
-      setShowModal(false);
-      setBookingSlot(null);
-    } catch (err) {
-      alert('網路錯誤，請重試');
-    } finally {
-      setSubmitting(false);
+  const handleCancelBooking = (id: string) => {
+    if (window.confirm('確定要取消這個加練預約嗎？')) {
+      setBookings((prev) => prev.filter((b) => b.id !== id));
+      setMyBookingIds((prev) => prev.filter((i) => i !== id));
     }
   };
 
-  const handleCancel = async (id: string) => {
-    setConfirmCancelId(id);
+  // 複製代碼小幫手
+  const copySessionCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedSessionId(code);
+    setTimeout(() => setCopiedSessionId(null), 2000);
   };
 
-  const confirmCancel = async () => {
-    const id = confirmCancelId;
-    if (!id) return;
-    setConfirmCancelId(null);
-    try {
-      const res = await fetch(`/api/bookings/${id}`, { method: 'DELETE' });
-      if (!res.ok) {
-        const data = await res.json();
-        alert(data.error ?? '取消失敗');
-        return;
-      }
-      const newIds = myBookingIds.filter((myId) => myId !== id);
-      setMyBookingIds(newIds);
-      await Promise.all([fetchBookings(selectedDate), fetchMyBookings(newIds)]);
-    } catch (err) {
-      alert('網路錯誤，請重試');
-    }
-  };
+  // 統計出席資料
+  const myBookingsList = bookings.filter((b) => myBookingIds.includes(b.id));
+  const queryStr = attendanceQuery.trim().toLowerCase();
 
-  const handleAdminLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const pwd = passwordInput;
-    try {
-      const res = await fetch('/api/admin/bookings', {
-        headers: { 'x-admin-password': pwd },
-      });
-      if (!res.ok) {
-        alert('密碼錯誤！');
-        return;
-      }
-      const data = await res.json();
-      setAdminBookings(data);
-      setIsAdminAuth(true);
-      setAdminPassword(pwd);
-      setPasswordInput('');
-    } catch (err) {
-      alert('網路錯誤，請重試');
-    }
-  };
+  // 收集所有社課的出席紀錄
+  const allAttendanceList = classSessions.flatMap((s) =>
+    s.attendees.map((a) => ({ ...a, sessionName: s.name, sessionDate: s.date, sessionId: s.id }))
+  );
 
-  const updateAdminBooking = async (id: string, updates: { attendance_status?: string; note?: string; actual_time?: string }) => {
-    try {
-      const res = await fetch(`/api/admin/bookings/${id}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-password': adminPassword,
-        },
-        body: JSON.stringify(updates),
-      });
-      if (res.ok) {
-        setAdminBookings((prev) => prev.map((b) => (b.id === id ? { ...b, ...updates } : b)));
-      } else {
-        alert('更新失敗');
-      }
-    } catch (err) {
-      alert('網路錯誤');
-    }
-  };
+  const matchedAttendance = queryStr
+    ? allAttendanceList.filter(
+        (a) =>
+          a.nickname.toLowerCase().includes(queryStr) ||
+          a.realName.toLowerCase().includes(queryStr) ||
+          a.studentId.toLowerCase().includes(queryStr)
+      )
+    : [];
 
-  const deleteAdminBooking = async (id: string) => {
-    try {
-      const res = await fetch(`/api/admin/bookings/${id}`, {
-        method: 'DELETE',
-        headers: { 'x-admin-password': adminPassword },
-      });
-      if (res.ok) {
-        const remaining = adminBookings.filter((b) => b.id !== id);
-        setAdminBookings(remaining);
-        if (selectedMember && remaining.filter((b) => b.realName === selectedMember).length === 0) {
-          setSelectedMember(null);
-        }
-      }
-    } catch (err) {
-      alert('網路錯誤');
-    } finally {
-      setConfirmDeleteId(null);
-    }
-  };
+  const riderBadge = getRiderTitle(matchedAttendance.length);
 
-  const deleteAdminMember = async (realName: string) => {
-    try {
-      const res = await fetch(`/api/admin/members/${encodeURIComponent(realName)}`, {
-        method: 'DELETE',
-        headers: { 'x-admin-password': adminPassword },
-      });
-      if (res.ok) {
-        setAdminBookings((prev) => prev.filter((b) => b.realName !== realName));
-        setSelectedMember(null);
-      }
-    } catch (err) {
-      alert('網路錯誤');
-    } finally {
-      setConfirmDeleteMember(false);
-    }
-  };
-
-  const clearAbsentBookings = async () => {
-    try {
-      const res = await fetch('/api/admin/clear-absent', {
-        method: 'DELETE',
-        headers: { 'x-admin-password': adminPassword },
-      });
-      if (res.ok) {
-        setAdminBookings((prev) => prev.filter((b) => b.attendance_status !== 'absent'));
-        setSelectedMember(null);
-      }
-    } catch (err) {
-      alert('刪除失敗');
-    } finally {
-      setConfirmClearAbsent(false);
-    }
-  };
-
-  const handleAddPin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPinName.trim() || !newPinCode.trim()) return;
-    setPinSubmitting(true);
-    try {
-      const res = await fetch('/api/admin/member-pins', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
-        body: JSON.stringify({ realName: newPinName.trim(), pin: newPinCode.trim() }),
-      });
-      if (res.ok) {
-        setNewPinName('');
-        setNewPinCode('');
-        await fetchMemberPins(adminPassword);
-      }
-    } catch (err) {
-      alert('網路錯誤');
-    } finally {
-      setPinSubmitting(false);
-    }
-  };
-
-  const handleDeletePin = async (realName: string) => {
-    try {
-      const res = await fetch(`/api/admin/member-pins/${encodeURIComponent(realName)}`, {
-        method: 'DELETE',
-        headers: { 'x-admin-password': adminPassword },
-      });
-      if (res.ok) {
-        setMemberPins((prev) => prev.filter((m) => m.realName !== realName));
-      }
-    } catch (err) {
-      alert('網路錯誤');
-    } finally {
-      setConfirmDeletePin(null);
-    }
-  };
-
-  const handleUpdateCheckinPwd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCheckinPwd.trim()) return;
-    setCheckinPwdSubmitting(true);
-    try {
-      const res = await fetch('/api/admin/checkin-password', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
-        body: JSON.stringify({ checkinPassword: newCheckinPwd.trim() }),
-      });
-      if (res.ok) {
-        setCheckinPwdDisplay(newCheckinPwd.trim());
-        setNewCheckinPwd('');
-        alert('點名密碼已更新！');
-      }
-    } catch (err) {
-      alert('網路錯誤');
-    } finally {
-      setCheckinPwdSubmitting(false);
-    }
-  };
-
-  // ─── QR Code Canvas 元件 ─────────────────────────────────────
-  const QrCanvas = ({ url, size = 220 }: { url: string; size?: number }) => {
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    useEffect(() => {
-      if (canvasRef.current) {
-        QRCode.toCanvas(canvasRef.current, url, {
-          width: size,
-          margin: 2,
-          color: {
-            dark: '#451a03',
-            light: '#ffffff',
-          },
-        });
-      }
-    }, [url, size]);
-    return <canvas ref={canvasRef} className="rounded-xl shadow-sm mx-auto" />;
-  };
-
-  const getCheckinUrl = (sessionId: string) => {
-    const origin = window.location.origin;
-    const path = window.location.pathname;
-    return `${origin}${path}#/class-checkin?session=${sessionId}`;
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
-  };
-
-  const getSlotBookings = (date: string, time: string) =>
-    bookings.filter((b) => b.date === date && b.time === time);
-
-  const today = getTodayTW();
-
-  // ═════════════════════════════════════════════════════════════
-  // 視圖 1: 專屬社課點名畫面 (掃描 QR Code 後到達)
-  // ═════════════════════════════════════════════════════════════
+  // ─────────────────── 學生現場點名簽到頁面 ─────────────────────────────────
   if (view === 'class-checkin') {
+    const currentSession = classSessions.find((s) => s.id === currentCheckinSessionId);
+
     return (
-      <div className="min-h-screen bg-stone-100/70 text-stone-900 font-sans p-4 md:p-8 flex items-center justify-center">
-        <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-stone-200/80 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-          {/* Header */}
-          <div className="bg-gradient-to-br from-amber-700 via-amber-800 to-amber-950 p-6 text-white text-center relative">
-            <button
-              onClick={() => {
-                window.location.hash = '';
-                setView('user');
-                setClassCheckinResult(null);
-              }}
-              className="absolute top-4 left-4 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors text-white"
-              title="返回預約首頁"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <div className="w-14 h-14 mx-auto mb-3 bg-white/15 rounded-2xl flex items-center justify-center backdrop-blur-sm shadow-inner">
-              <GraduationCap className="w-8 h-8 text-amber-200" />
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl shadow-xl p-6 md:p-8 max-w-md w-full border border-stone-200">
+          {/* 返回按鈕 */}
+          <button
+            onClick={() => {
+              setView('user');
+              setCheckinSuccessMsg(null);
+              setCheckinErrorMsg(null);
+            }}
+            className="text-xs font-bold text-stone-500 hover:text-stone-800 flex items-center gap-1 mb-4"
+          >
+            ← 返回預約首頁
+          </button>
+
+          {!currentSession ? (
+            <div className="text-center py-8">
+              <div className="w-16 h-16 rounded-2xl bg-rose-100 text-rose-500 flex items-center justify-center mx-auto mb-3">
+                <AlertCircle className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-black text-stone-800">找不到此社課場次</h3>
+              <p className="text-xs text-stone-500 mt-2">
+                代碼「{currentCheckinSessionId}」不存在或已被幹部刪除，請向現場幹部確認。
+              </p>
             </div>
-            <h2 className="text-2xl font-bold tracking-tight">馬術社課現場簽到</h2>
-            <p className="text-xs text-amber-200/80 mt-1">馬術社社團課程</p>
-          </div>
-
-          <div className="p-6 md:p-8 space-y-6">
-            {classCheckinLoading && !classSessionData ? (
-              <div className="text-center py-10 space-y-3">
-                <div className="w-8 h-8 border-3 border-amber-600 border-t-transparent rounded-full animate-spin mx-auto" />
-                <p className="text-sm text-stone-500">正在載入社課場次資訊…</p>
+          ) : checkinSuccessMsg ? (
+            <div className="text-center py-6 animate-in fade-in">
+              <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-4">
+                <CheckCircle2 className="w-12 h-12" />
               </div>
-            ) : classCheckinResult?.success ? (
-              <div className="text-center py-6 space-y-4 animate-in fade-in">
-                <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-sm">
-                  <CheckCircle2 className="w-10 h-10" />
+              <h3 className="text-2xl font-black text-stone-800">簽到完成！</h3>
+              <p className="text-sm font-semibold text-emerald-700 mt-2">{checkinSuccessMsg}</p>
+              <div className="my-5 p-3.5 bg-stone-50 rounded-2xl border border-stone-100 text-xs text-stone-600 space-y-1">
+                <p className="font-bold text-stone-800">{currentSession.name}</p>
+                <p>日期：{currentSession.date} · 代碼：<span className="font-mono font-bold">{currentSession.id}</span></p>
+              </div>
+              <button
+                onClick={() => {
+                  setView('user');
+                  setCheckinSuccessMsg(null);
+                }}
+                className="w-full py-3 bg-stone-900 text-white rounded-xl font-bold hover:bg-stone-800 transition-colors"
+              >
+                回到首頁
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 rounded-2xl bg-emerald-600 text-white flex items-center justify-center mx-auto mb-3 shadow-md shadow-emerald-200">
+                  <GraduationCap className="w-8 h-8" />
                 </div>
-                <div>
-                  <h3 className="text-2xl font-bold text-stone-800">
-                    {classCheckinResult.realName} 同學，點名成功！
-                  </h3>
-                  <p className="text-sm text-stone-500 mt-1">{classCheckinResult.message}</p>
+                <h2 className="text-2xl font-black text-stone-800">社課現場簽到</h2>
+                <div className="mt-3 bg-emerald-50 border border-emerald-100 rounded-2xl p-3.5 text-xs text-emerald-900">
+                  <p className="font-bold text-sm text-emerald-800">{currentSession.name}</p>
+                  <p className="mt-0.5 text-stone-600">
+                    日期：{currentSession.date} · 場次代碼：<span className="font-mono font-bold text-emerald-700">{currentSession.id}</span>
+                  </p>
                 </div>
-                <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4 text-xs text-stone-600 space-y-1">
-                  <p className="font-semibold text-stone-800">🐎 今日社課重點提示：</p>
-                  <p>1. 請遵循教練指示進行熱身與裝備配戴</p>
-                  <p>2. 上課時請保持冷靜與馬匹安全距離</p>
+              </div>
+
+              {checkinErrorMsg && (
+                <div className="mb-4 p-3 bg-rose-50 border border-rose-100 text-rose-700 rounded-xl text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{checkinErrorMsg}</span>
                 </div>
+              )}
+
+              <form onSubmit={handleCheckinSubmit} className="space-y-3.5">
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">
+                    個人學號 (PIN) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={checkinForm.studentId}
+                    onChange={(e) => setCheckinForm({ ...checkinForm, studentId: e.target.value })}
+                    className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 outline-none text-sm transition-all font-mono"
+                    placeholder="請輸入學號"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">綽號 *</label>
+                  <input
+                    type="text"
+                    required
+                    value={checkinForm.nickname}
+                    onChange={(e) => setCheckinForm({ ...checkinForm, nickname: e.target.value })}
+                    className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 outline-none text-sm transition-all"
+                    placeholder="請輸入綽號"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">真實姓名 *</label>
+                  <input
+                    type="text"
+                    required
+                    value={checkinForm.realName}
+                    onChange={(e) => setCheckinForm({ ...checkinForm, realName: e.target.value })}
+                    className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 outline-none text-sm transition-all"
+                    placeholder="請輸入真實姓名"
+                  />
+                </div>
+
                 <button
-                  onClick={() => {
-                    window.location.hash = '';
-                    setView('user');
-                  }}
-                  className="w-full py-3 bg-stone-900 text-white rounded-xl font-medium hover:bg-stone-800 transition-colors shadow-sm"
+                  type="submit"
+                  disabled={!currentSession.isOpen}
+                  className="w-full py-3.5 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 shadow-md shadow-emerald-200 transition-all text-sm mt-2 disabled:opacity-50"
                 >
-                  返回系統首頁
+                  {currentSession.isOpen ? '完成現場簽到' : '點名已關閉'}
                 </button>
-              </div>
-            ) : (
-              <>
-                {classSessionData ? (
-                  <div className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-4 text-sm space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-amber-800 uppercase tracking-wider">今日場次</span>
-                      <span
-                        className={`inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full font-semibold ${
-                          classSessionData.isOpen ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
-                        }`}
-                      >
-                        <span className={`w-1.5 h-1.5 rounded-full ${classSessionData.isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-                        {classSessionData.isOpen ? '點名進行中' : '已截止點名'}
-                      </span>
-                    </div>
-                    <p className="text-lg font-bold text-stone-900">{classSessionData.name}</p>
-                    <p className="text-xs text-stone-500">日期：{classSessionData.date}</p>
-                  </div>
-                ) : (
-                  <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-sm text-rose-700">
-                    {classCheckinResult?.message || '找不到場次資訊，請確認連結是否正確。'}
-                  </div>
-                )}
-
-                {classSessionData?.isOpen && (
-                  <form onSubmit={handleClassCheckinSubmit} className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-semibold text-stone-700 mb-1.5">
-                        請輸入學號 (PIN 碼) <span className="text-rose-500">*</span>
-                      </label>
-                      <div className="relative">
-                        <Lock className="w-5 h-5 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                        <input
-                          type="text"
-                          required
-                          autoFocus
-                          value={classCheckinPin}
-                          onChange={(e) => {
-                            setClassCheckinPin(e.target.value);
-                            setClassCheckinResult(null);
-                          }}
-                          className="w-full pl-11 pr-4 py-3 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none transition-all font-mono text-base"
-                          placeholder="請輸入學號完成簽到"
-                        />
-                      </div>
-                      <p className="text-xs text-stone-400 mt-1.5">
-                        * 系統將自動比對您的社員資料並記錄出席
-                      </p>
-                    </div>
-
-                    {classCheckinResult && !classCheckinResult.success && (
-                      <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-700 flex items-start gap-2">
-                        <AlertCircle className="w-4 h-4 shrink-0 text-rose-500 mt-0.5" />
-                        <div>
-                          <p className="font-medium">{classCheckinResult.message}</p>
-                        </div>
-                      </div>
-                    )}
-
-                    <button
-                      type="submit"
-                      disabled={classCheckinLoading || !classCheckinPin.trim()}
-                      className="w-full py-3.5 bg-gradient-to-r from-amber-700 to-amber-900 text-white rounded-xl font-bold hover:from-amber-800 hover:to-amber-950 transition-all shadow-md shadow-amber-900/20 disabled:opacity-60 text-base"
-                    >
-                      {classCheckinLoading ? '驗證中…' : '✅ 立即完成點名'}
-                    </button>
-                  </form>
-                )}
-
-                <div className="pt-2 text-center border-t border-stone-100">
-                  <button
-                    onClick={() => {
-                      window.location.hash = '';
-                      setView('member');
-                    }}
-                    className="text-xs text-amber-800 font-medium hover:underline inline-flex items-center gap-1"
-                  >
-                    <KeyRound className="w-3.5 h-3.5" />
-                    還沒設定過學號？點此前往設定
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+              </form>
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
-  // ═════════════════════════════════════════════════════════════
-  // 視圖 2: 個人紀錄 (加練時數 + 社課出席歷程)
-  // ═════════════════════════════════════════════════════════════
-  const renderMemberView = () => {
-    if (!memberPin || !memberRealName) {
-      const isRegister = memberMode === 'register';
-      return (
-        <div className="w-full max-w-md mx-auto mt-6 bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-200/80 overflow-hidden">
-          <div className="flex flex-col items-center mb-6">
-            <div className="w-14 h-14 bg-sienna-50 border border-sienna-200/60 rounded-2xl flex items-center justify-center mb-3 shadow-inner">
-              <KeyRound className="w-7 h-7 text-sienna-700" />
-            </div>
-            <h2 className="text-2xl font-bold text-stone-800">個人訓練與社課紀錄</h2>
-            <p className="text-xs text-stone-500 mt-1">輸入學號查詢您的加練時數與出席狀況</p>
-          </div>
-
-          <div className="flex bg-stone-100/90 rounded-2xl p-1 mb-6 border border-stone-200/50">
-            <button
-              type="button"
-              onClick={() => {
-                setMemberMode('login');
-                setMemberLoginError('');
-              }}
-              className={`flex-1 py-2.5 text-xs md:text-sm font-bold rounded-xl transition-all ${
-                !isRegister ? 'bg-white text-sienna-800 shadow-sm' : 'text-stone-500 hover:text-stone-800'
-              }`}
-            >
-              登入
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMemberMode('register');
-                setMemberLoginError('');
-              }}
-              className={`flex-1 py-2.5 text-xs md:text-sm font-bold rounded-xl transition-all ${
-                isRegister ? 'bg-white text-sienna-800 shadow-sm' : 'text-stone-500 hover:text-stone-800'
-              }`}
-            >
-              首次設定 (綁定學號)
-            </button>
-          </div>
-
-          {isRegister ? (
-            <form onSubmit={handleMemberRegister} className="space-y-4">
-              <div className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-3.5 text-xs text-amber-900 leading-relaxed">
-                📋 請填寫真實本名與學號。日後只需輸入學號即可查詢加練時數與進行社課簽到。
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-stone-700 mb-1">
-                  真實本名 <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={memberRegisterName}
-                  onChange={(e) => {
-                    setMemberRegisterName(e.target.value);
-                    setMemberLoginError('');
-                  }}
-                  className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-600 focus:ring-2 focus:ring-sienna-200 outline-none transition-all text-sm"
-                  placeholder="例如：王大明"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-stone-700 mb-1">
-                  學號 (登入 PIN) <span className="text-rose-500">*</span>
-                </label>
-                <div className="relative">
-                  <Lock className="w-5 h-5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    required
-                    value={memberPinInput}
-                    onChange={(e) => {
-                      setMemberPinInput(e.target.value);
-                      setMemberLoginError('');
-                    }}
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-600 focus:ring-2 focus:ring-sienna-200 outline-none transition-all font-mono text-sm"
-                    placeholder="請輸入學號"
-                  />
-                </div>
-              </div>
-              {memberLoginError && (
-                <p className="text-xs text-rose-500 font-medium">{memberLoginError}</p>
-              )}
-              <button
-                type="submit"
-                disabled={memberLoading}
-                className="w-full py-3 bg-sienna-600 text-white rounded-xl font-bold hover:bg-sienna-700 transition-colors shadow-sm disabled:opacity-60 text-sm"
-              >
-                {memberLoading ? '設定中…' : '完成綁定並查看紀錄'}
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handleMemberLogin} className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-stone-700 mb-1">學號 (PIN)</label>
-                <div className="relative">
-                  <Lock className="w-5 h-5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="password"
-                    required
-                    value={memberPinInput}
-                    onChange={(e) => {
-                      setMemberPinInput(e.target.value);
-                      setMemberLoginError('');
-                    }}
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-600 focus:ring-2 focus:ring-sienna-200 outline-none transition-all font-mono text-sm"
-                    placeholder="請輸入學號"
-                  />
-                </div>
-                {memberLoginError && (
-                  <p className="text-xs text-rose-500 font-medium mt-1">{memberLoginError}</p>
-                )}
-              </div>
-              <button
-                type="submit"
-                disabled={memberLoading}
-                className="w-full py-3 bg-sienna-600 text-white rounded-xl font-bold hover:bg-sienna-700 transition-colors shadow-sm disabled:opacity-60 text-sm"
-              >
-                {memberLoading ? '查詢中…' : '登入並查看紀錄'}
-              </button>
-            </form>
-          )}
-        </div>
-      );
-    }
-
-    const totalHours = memberRecords.reduce(
-      (sum, r) => sum + calculateHours(r.specificTime, r.actualTime),
-      0
-    );
-
-    return (
-      <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in duration-300">
-        {/* Profile Card */}
-        <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 flex justify-between items-center">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-sienna-100 text-sienna-700 flex items-center justify-center font-bold text-lg shadow-inner">
-              {memberRealName.slice(0, 1)}
-            </div>
-            <div>
-              <p className="font-bold text-stone-800 text-lg md:text-xl flex items-center gap-2">
-                {memberRealName}
-                <span className="text-xs font-normal text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                  已認證社員
-                </span>
-              </p>
-              <p className="text-xs text-stone-500">學號 PIN: {memberPin}</p>
-            </div>
-          </div>
-          <button
-            onClick={handleMemberLogout}
-            className="text-xs md:text-sm font-medium text-stone-500 hover:text-stone-800 px-3.5 py-2 rounded-xl hover:bg-stone-100 transition-colors border border-stone-200"
-          >
-            登出
-          </button>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-3 gap-3 md:gap-4">
-          <div className="bg-white p-4 md:p-5 rounded-3xl shadow-sm border border-stone-200 text-center">
-            <p className="text-xs md:text-sm text-stone-500 mb-1 flex items-center justify-center gap-1">
-              <Clock className="w-3.5 h-3.5 text-sienna-600" />
-              加練總時數
-            </p>
-            <p className="text-2xl md:text-3xl font-black text-sienna-700">
-              {totalHours} <span className="text-xs font-normal text-stone-400">hr</span>
-            </p>
-          </div>
-          <div className="bg-white p-4 md:p-5 rounded-3xl shadow-sm border border-stone-200 text-center">
-            <p className="text-xs md:text-sm text-stone-500 mb-1 flex items-center justify-center gap-1">
-              <Flame className="w-3.5 h-3.5 text-amber-600" />
-              加練次數
-            </p>
-            <p className="text-2xl md:text-3xl font-black text-stone-800">
-              {memberRecords.length} <span className="text-xs font-normal text-stone-400">次</span>
-            </p>
-          </div>
-          <div className="bg-white p-4 md:p-5 rounded-3xl shadow-sm border border-stone-200 text-center">
-            <p className="text-xs md:text-sm text-stone-500 mb-1 flex items-center justify-center gap-1">
-              <GraduationCap className="w-3.5 h-3.5 text-emerald-600" />
-              社課出席
-            </p>
-            <p className="text-2xl md:text-3xl font-black text-emerald-700">
-              {memberClassRecords.length} <span className="text-xs font-normal text-stone-400">堂</span>
-            </p>
-          </div>
-        </div>
-
-        {/* Records Lists */}
-        <div className="grid md:grid-cols-2 gap-6">
-          {/* 加練紀錄 */}
-          <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
-            <h3 className="font-bold text-stone-800 flex items-center justify-between">
-              <span className="flex items-center gap-2">
-                <ClipboardCheck className="w-5 h-5 text-sienna-600" />
-                已點名加練明細
-              </span>
-              <span className="text-xs font-normal text-stone-400">共 {memberRecords.length} 筆</span>
-            </h3>
-            {memberRecords.length === 0 ? (
-              <div className="text-center py-10 text-stone-400 text-sm">尚無加練出席紀錄</div>
-            ) : (
-              <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
-                {memberRecords.map((r) => (
-                  <div
-                    key={r.id}
-                    className="flex items-center justify-between bg-stone-50/80 rounded-2xl p-3 border border-stone-100"
-                  >
-                    <div>
-                      <p className="font-semibold text-stone-800 text-sm">{r.date}</p>
-                      <p className="text-xs text-stone-500">{r.time}</p>
-                      {r.actualTime ? (
-                        <p className="text-xs text-amber-600 mt-0.5">
-                          ✏️ {r.actualTime}{' '}
-                          <span className="text-stone-400 line-through">{r.specificTime}</span>
-                        </p>
-                      ) : (
-                        r.specificTime && (
-                          <p className="text-xs text-sienna-600 mt-0.5">⏱ {r.specificTime}</p>
-                        )
-                      )}
-                    </div>
-                    <div className="text-right bg-white px-3 py-1.5 rounded-xl border border-stone-200/60 shadow-2xs">
-                      <p className="text-lg font-bold text-sienna-700 leading-none">
-                        {calculateHours(r.specificTime, r.actualTime)}
-                      </p>
-                      <p className="text-3xs text-stone-400 uppercase mt-0.5">小時</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* 社課出席紀錄 */}
-          <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
-            <h3 className="font-bold text-stone-800 flex items-center justify-between">
-              <span className="flex items-center gap-2">
-                <GraduationCap className="w-5 h-5 text-emerald-600" />
-                社課簽到明細
-              </span>
-              <span className="text-xs font-normal text-stone-400">共 {memberClassRecords.length} 堂</span>
-            </h3>
-            {memberClassRecords.length === 0 ? (
-              <div className="text-center py-10 text-stone-400 text-sm">尚無社課簽到紀錄</div>
-            ) : (
-              <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
-                {memberClassRecords.map((c) => (
-                  <div
-                    key={c.id}
-                    className="flex items-center justify-between bg-emerald-50/40 rounded-2xl p-3 border border-emerald-100/80"
-                  >
-                    <div>
-                      <p className="font-semibold text-stone-800 text-sm">{c.sessionName}</p>
-                      <p className="text-xs text-stone-500">日期：{c.date}</p>
-                    </div>
-                    <div className="text-right">
-                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-white border border-emerald-200 px-2.5 py-1 rounded-lg">
-                        <Check className="w-3 h-3" />
-                        已出席
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // ═════════════════════════════════════════════════════════════
-  // 視圖 3: 管理員後台
-  // ═════════════════════════════════════════════════════════════
+  // ─────────────────── 幹部後台視圖 ─────────────────────────────────────────
   const renderAdminView = () => {
     if (!isAdminAuth) {
       return (
-        <div className="w-full max-w-md mx-auto mt-12 bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-200 overflow-hidden">
+        <div className="max-w-md mx-auto mt-12 bg-white p-8 rounded-3xl shadow-sm border border-stone-200">
           <div className="flex flex-col items-center mb-6">
-            <div className="w-14 h-14 bg-sienna-50 border border-sienna-200 rounded-2xl flex items-center justify-center mb-3">
-              <Shield className="w-7 h-7 text-sienna-700" />
+            <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mb-3">
+              <Shield className="w-8 h-8" />
             </div>
-            <h2 className="text-2xl font-bold text-stone-800">幹部與管理員後台</h2>
-            <p className="text-xs text-stone-500 mt-1">請輸入管理密碼進入系統管理</p>
+            <h2 className="text-2xl font-black text-stone-800">管理員控制台 / 幹部後台</h2>
+            <p className="text-xs text-stone-400 mt-1">統整管理加練名冊、社課 QR Code 場次與點名密碼</p>
           </div>
-          <form onSubmit={handleAdminLogin} className="space-y-4">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (passwordInput === 'admin123') {
+                setIsAdminAuth(true);
+                setPasswordInput('');
+              } else alert('密碼錯誤！');
+            }}
+            className="space-y-4"
+          >
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">管理密碼</label>
+              <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">
+                幹部管理密碼
+              </label>
               <div className="relative">
-                <Lock className="w-5 h-5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Lock className="w-5 h-5 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="password"
                   required
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 focus:ring-2 focus:ring-sienna-200 outline-none transition-all text-sm"
-                  placeholder="請輸入管理員密碼"
+                  className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-500 focus:ring-2 focus:ring-amber-100 outline-none transition-all text-sm"
+                  placeholder="預設密碼: admin123"
                 />
               </div>
             </div>
             <button
               type="submit"
-              className="w-full py-2.5 bg-sienna-600 text-white rounded-xl font-bold hover:bg-sienna-700 transition-colors shadow-sm"
+              className="w-full py-3 bg-amber-800 text-white rounded-xl font-bold hover:bg-amber-900 transition-colors shadow-sm"
             >
-              進入管理後台
+              登入幹部控制台
             </button>
           </form>
         </div>
       );
     }
 
-    const byDate = dates.reduce<Record<string, AdminBooking[]>>((acc, d) => {
-      acc[d.value] = adminBookings.filter((b) => b.date === d.value);
-      return acc;
-    }, {});
-
     return (
-      <div className="space-y-6 animate-in fade-in duration-300 w-full min-w-0">
-        {/* Admin Navigation Bar */}
-        <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center bg-white p-4 md:p-5 rounded-3xl shadow-sm border border-stone-200 gap-3.5">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 bg-stone-100/80 p-1.5 rounded-2xl border border-stone-200/50 w-full md:w-auto">
+      <div className="space-y-6 animate-in fade-in duration-200">
+        {/* 後台標題卡片 */}
+        <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h2 className="text-xl font-black text-stone-800">管理員控制台 / 幹部後台</h2>
+              <p className="text-xs text-stone-500 mt-0.5">統整管理加練名冊、社課 QR Code 場次與點名密碼</p>
+            </div>
+            <button
+              onClick={() => setIsAdminAuth(false)}
+              className="px-4 py-2 text-xs font-bold text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-xl transition-colors shrink-0"
+            >
+              登出
+            </button>
+          </div>
+
+          {/* 後台四個主要 Tab 按鈕 (符合截圖二) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-5">
             <button
               onClick={() => setAdminTab('overview')}
-              className={`px-3 py-2.5 font-bold rounded-xl text-xs md:text-sm transition-all flex items-center justify-center gap-1.5 ${
+              className={`py-3 px-3 rounded-2xl text-xs md:text-sm font-bold transition-all flex items-center justify-center gap-2 border ${
                 adminTab === 'overview'
-                  ? 'bg-white text-sienna-800 shadow-sm'
-                  : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
+                  ? 'bg-amber-50 text-amber-900 border-amber-300 shadow-sm'
+                  : 'bg-stone-50 text-stone-600 border-stone-200/80 hover:bg-stone-100'
               }`}
             >
-              <Calendar className="w-4 h-4 text-sienna-600" />
+              <Calendar className="w-4 h-4" />
               預約總覽
             </button>
             <button
               onClick={() => setAdminTab('members')}
-              className={`px-3 py-2.5 font-bold rounded-xl text-xs md:text-sm transition-all flex items-center justify-center gap-1.5 ${
+              className={`py-3 px-3 rounded-2xl text-xs md:text-sm font-bold transition-all flex items-center justify-center gap-2 border ${
                 adminTab === 'members'
-                  ? 'bg-white text-sienna-800 shadow-sm'
-                  : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
+                  ? 'bg-amber-50 text-amber-900 border-amber-300 shadow-sm'
+                  : 'bg-stone-50 text-stone-600 border-stone-200/80 hover:bg-stone-100'
               }`}
             >
-              <User className="w-4 h-4 text-sienna-600" />
+              <Users className="w-4 h-4" />
               成員名冊
             </button>
             <button
               onClick={() => setAdminTab('classes')}
-              className={`px-3 py-2.5 font-bold rounded-xl text-xs md:text-sm transition-all flex items-center justify-center gap-1.5 ${
+              className={`py-3 px-3 rounded-2xl text-xs md:text-sm font-bold transition-all flex items-center justify-center gap-2 border ${
                 adminTab === 'classes'
-                  ? 'bg-white text-sienna-800 shadow-sm'
-                  : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
+                  ? 'bg-white text-emerald-800 border-emerald-500 shadow-sm ring-2 ring-emerald-100'
+                  : 'bg-stone-50 text-stone-600 border-stone-200/80 hover:bg-stone-100'
               }`}
             >
               <GraduationCap className="w-4 h-4 text-emerald-600" />
@@ -1568,543 +731,25 @@ export default function App() {
             </button>
             <button
               onClick={() => setAdminTab('settings')}
-              className={`px-3 py-2.5 font-bold rounded-xl text-xs md:text-sm transition-all flex items-center justify-center gap-1.5 ${
+              className={`py-3 px-3 rounded-2xl text-xs md:text-sm font-bold transition-all flex items-center justify-center gap-2 border ${
                 adminTab === 'settings'
-                  ? 'bg-white text-sienna-800 shadow-sm'
-                  : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
+                  ? 'bg-amber-50 text-amber-900 border-amber-300 shadow-sm'
+                  : 'bg-stone-50 text-stone-600 border-stone-200/80 hover:bg-stone-100'
               }`}
             >
-              <Settings className="w-4 h-4 text-stone-600" />
+              <Settings className="w-4 h-4" />
               設定與 PIN
-            </button>
-          </div>
-
-          <div className="flex items-center justify-end gap-2 shrink-0 pt-1 md:pt-0 border-t md:border-t-0 border-stone-100">
-            {adminTab === 'overview' && (
-              confirmClearAbsent ? (
-                <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 rounded-xl px-2.5 py-1">
-                  <span className="text-xs font-semibold text-rose-700">確定清空？</span>
-                  <button
-                    onClick={clearAbsentBookings}
-                    className="text-xs bg-rose-600 text-white px-2 py-0.5 rounded-lg font-bold"
-                  >
-                    確定
-                  </button>
-                  <button
-                    onClick={() => setConfirmClearAbsent(false)}
-                    className="text-xs text-stone-500 px-1.5 py-0.5"
-                  >
-                    取消
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setConfirmClearAbsent(true)}
-                  className="flex items-center gap-1 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-xl border border-rose-200/60 transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  清空未加練
-                </button>
-              )
-            )}
-            <button
-              onClick={() => {
-                setIsAdminAuth(false);
-                setAdminBookings([]);
-                setAdminPassword('');
-              }}
-              className="text-xs font-medium text-stone-500 hover:text-stone-800 px-3 py-2 rounded-xl hover:bg-stone-100 transition-colors border border-stone-200"
-            >
-              登出
             </button>
           </div>
         </div>
 
-        {/* Tab 1: 預約總覽 */}
-        {adminTab === 'overview' && (
-          <div key="overview" className="space-y-6 animate-in fade-in zoom-in-[0.99] duration-150">
-            {dates.map((dateObj) => {
-              const dateBookings = byDate[dateObj.value] ?? [];
-              if (dateBookings.length === 0) return null;
-              return (
-                <div
-                  key={dateObj.value}
-                  className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 overflow-hidden"
-                >
-                  <h3 className="text-lg font-bold text-sienna-800 mb-4 border-b border-stone-100 pb-2.5 flex items-center justify-between">
-                    <span>{dateObj.display}</span>
-                    <span className="text-xs font-medium text-stone-400">
-                      共 {dateBookings.length} 人預約
-                    </span>
-                  </h3>
-                  <div className="space-y-4">
-                    {Array.from(new Set(dateBookings.map((b) => b.time)))
-                      .sort()
-                      .map((time) => {
-                        const slotBookings = dateBookings.filter((b) => b.time === time);
-                        const isMorningSlot = time === MORNING_TIME_SLOT;
-                        return (
-                          <div
-                            key={time}
-                            className={`rounded-2xl p-4 border ${
-                              isMorningSlot
-                                ? 'bg-amber-50/60 border-amber-200/80'
-                                : 'bg-stone-50/60 border-stone-100'
-                            }`}
-                          >
-                            <div className="flex justify-between items-center mb-3">
-                              <h4 className="font-bold text-stone-800 text-sm flex items-center gap-1.5">
-                                <Clock
-                                  className={`w-4 h-4 ${
-                                    isMorningSlot ? 'text-amber-600' : 'text-sienna-600'
-                                  }`}
-                                />
-                                {isMorningSlot ? '🌅 ' : ''}
-                                {time}
-                              </h4>
-                              <span
-                                className={`text-xs font-bold px-2 py-0.5 rounded-md ${
-                                  isMorningSlot
-                                    ? 'text-amber-700 bg-amber-100'
-                                    : 'text-sienna-700 bg-sienna-100'
-                                }`}
-                              >
-                                {slotBookings.length} 人
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                              {slotBookings.map((b, idx) => (
-                                <div
-                                  key={b.id}
-                                  className="flex items-center gap-3 bg-white p-3 rounded-xl border border-stone-200/70 shadow-2xs"
-                                >
-                                  <span className="w-5 h-5 shrink-0 rounded-full bg-stone-100 text-stone-600 flex items-center justify-center text-xs font-bold">
-                                    {idx + 1}
-                                  </span>
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center justify-between gap-1">
-                                      <p className="font-bold text-stone-800 text-sm truncate">
-                                        {b.nickname}
-                                      </p>
-                                      <span
-                                        className={`text-3xs px-1.5 py-0.5 rounded font-bold ${
-                                          b.attendance_status === 'attended'
-                                            ? 'bg-emerald-100 text-emerald-700'
-                                            : b.attendance_status === 'absent'
-                                            ? 'bg-rose-100 text-rose-700'
-                                            : 'bg-stone-100 text-stone-600'
-                                        }`}
-                                      >
-                                        {b.attendance_status === 'attended'
-                                          ? '已點名'
-                                          : b.attendance_status === 'absent'
-                                          ? '未加練'
-                                          : '待確認'}
-                                      </span>
-                                    </div>
-                                    <p className="text-xs text-stone-400 truncate">{b.realName}</p>
-                                    {b.specificTime && (
-                                      <p className="text-xs text-sienna-600 font-medium truncate mt-0.5">
-                                        ⏱ {b.specificTime}
-                                      </p>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </div>
-              );
-            })}
-            {adminBookings.length === 0 && (
-              <div className="text-center py-16 bg-white rounded-3xl border border-stone-200">
-                <Calendar className="w-12 h-12 text-stone-300 mx-auto mb-2" />
-                <p className="text-stone-500 font-medium">目前尚無任何加練預約紀錄</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Tab 2: 成員名冊 */}
-        {adminTab === 'members' && (
-          <div key="members" className="space-y-6 animate-in fade-in zoom-in-[0.99] duration-150">
-            {selectedMember ? (
-              <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-6">
-                {/* 成員詳細 Header */}
-                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-stone-100 pb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-sienna-100 text-sienna-800 flex items-center justify-center font-black text-xl shadow-inner">
-                      {selectedMember.slice(0, 1)}
-                    </div>
-                    <div>
-                      <h3 className="text-xl font-black text-stone-900 flex items-center gap-2">
-                        {selectedMember}
-                        {memberPins.find((p) => p.realName === selectedMember) ? (
-                          <span className="text-xs font-mono font-bold bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-lg">
-                            學號 PIN: {memberPins.find((p) => p.realName === selectedMember)?.pin}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-stone-400 bg-stone-100 px-2 py-0.5 rounded-lg">
-                            尚未綁定學號
-                          </span>
-                        )}
-                      </h3>
-                      <p className="text-xs text-stone-400 mt-0.5">社員個別訓練與社課出席明細</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {confirmDeleteMember ? (
-                      <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3 py-1.5">
-                        <span className="text-xs font-semibold text-rose-700">刪除此成員所有紀錄？</span>
-                        <button
-                          onClick={() => deleteAdminMember(selectedMember)}
-                          className="text-xs bg-rose-600 text-white px-2.5 py-1 rounded-lg font-bold"
-                        >
-                          確定
-                        </button>
-                        <button
-                          onClick={() => setConfirmDeleteMember(false)}
-                          className="text-xs text-stone-500 px-2 py-1"
-                        >
-                          取消
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setConfirmDeleteMember(true)}
-                        className="text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-xl border border-rose-200 transition-colors"
-                      >
-                        刪除個人加練紀錄
-                      </button>
-                    )}
-                    <button
-                      onClick={() => {
-                        setSelectedMember(null);
-                        setConfirmDeleteMember(false);
-                      }}
-                      className="text-sienna-800 bg-stone-100 hover:bg-stone-200 px-4 py-2 rounded-xl font-bold text-xs transition-colors"
-                    >
-                      返回名冊
-                    </button>
-                  </div>
-                </div>
-
-                {(() => {
-                  const memberRecords = adminBookings
-                    .filter((b) => b.realName === selectedMember)
-                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-                  const attended = memberRecords.filter((b) => b.attendance_status === 'attended');
-                  const rawTotalHrs = attended.reduce(
-                    (sum, b) => sum + calculateHours(b.specificTime, b.actualTime),
-                    0
-                  );
-                  // 無條件進位至小數點後第 2 位
-                  const totalHrs = formatHours(rawTotalHrs);
-
-                  // 找出該成員的所有社課出席紀錄
-                  const memberClassAttendance = adminClassSessions
-                    .flatMap((s) =>
-                      (s.attendees || [])
-                        .filter((a) => a.realName === selectedMember)
-                        .map((a) => ({
-                          sessionName: s.name,
-                          date: s.date,
-                          checkedAt: a.checkedAt,
-                          id: a.id,
-                        }))
-                    )
-                    .sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime());
-
-                  return (
-                    <div className="space-y-6">
-                      {/* 3 大統計指標卡 */}
-                      <div className="grid grid-cols-3 gap-3 md:gap-4">
-                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 text-center">
-                          <p className="text-xs text-stone-500 mb-1 flex items-center justify-center gap-1">
-                            <Clock className="w-3.5 h-3.5 text-sienna-600" />
-                            加練總時數 (進位)
-                          </p>
-                          <p className="text-2xl font-black text-sienna-700">
-                            {totalHrs} <span className="text-xs font-normal text-stone-400">小時</span>
-                          </p>
-                        </div>
-
-                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 text-center">
-                          <p className="text-xs text-stone-500 mb-1 flex items-center justify-center gap-1">
-                            <Flame className="w-3.5 h-3.5 text-amber-600" />
-                            加練出席次數
-                          </p>
-                          <p className="text-2xl font-black text-stone-800">
-                            {attended.length} <span className="text-xs font-normal text-stone-400">次</span>
-                          </p>
-                        </div>
-
-                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 text-center">
-                          <p className="text-xs text-stone-500 mb-1 flex items-center justify-center gap-1">
-                            <GraduationCap className="w-3.5 h-3.5 text-emerald-600" />
-                            社課出席堂數
-                          </p>
-                          <p className="text-2xl font-black text-emerald-700">
-                            {memberClassAttendance.length} <span className="text-xs font-normal text-stone-400">堂</span>
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* 兩欄明細：加練預約 & 社課出席 */}
-                      <div className="grid md:grid-cols-2 gap-6">
-                        {/* 加練紀錄 */}
-                        <div className="space-y-3">
-                          <h4 className="font-bold text-stone-800 text-sm flex items-center justify-between border-b border-stone-100 pb-2">
-                            <span className="flex items-center gap-1.5">
-                              <ClipboardCheck className="w-4 h-4 text-sienna-600" />
-                              加練預約紀錄 ({memberRecords.length})
-                            </span>
-                          </h4>
-                          {memberRecords.length === 0 ? (
-                            <p className="text-center py-8 text-stone-400 text-xs">尚無加練預約紀錄</p>
-                          ) : (
-                            <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
-                              {memberRecords.map((b) => (
-                                <div
-                                  key={b.id}
-                                  className="bg-stone-50/80 border border-stone-200/80 rounded-2xl p-3.5 space-y-2.5 text-sm"
-                                >
-                                  <div className="flex justify-between items-start">
-                                    <div>
-                                      <p className="font-bold text-stone-900">
-                                        {b.date} {b.time}
-                                      </p>
-                                      <p className="text-xs text-stone-500 mt-0.5">
-                                        預約時段：{b.specificTime}
-                                        {b.actualTime && (
-                                          <span className="text-amber-700 ml-1 font-semibold">
-                                            (實到: {b.actualTime})
-                                          </span>
-                                        )}
-                                      </p>
-                                    </div>
-                                    <span className="text-xs font-bold text-sienna-700 bg-white border border-stone-200 px-2 py-0.5 rounded-md">
-                                      {calculateHours(b.specificTime, b.actualTime)} hr
-                                    </span>
-                                  </div>
-
-                                  {/* 狀態切換 */}
-                                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-stone-200/60">
-                                    <div className="flex bg-stone-200/70 rounded-xl p-0.5">
-                                      {['pending', 'attended', 'absent'].map((st) => (
-                                        <button
-                                          key={st}
-                                          onClick={() => updateAdminBooking(b.id, { attendance_status: st })}
-                                          className={`px-2.5 py-0.5 text-3xs font-bold rounded-lg transition-all ${
-                                            (b.attendance_status || 'pending') === st
-                                              ? st === 'attended'
-                                                ? 'bg-emerald-500 text-white shadow-2xs'
-                                                : st === 'absent'
-                                                ? 'bg-rose-500 text-white shadow-2xs'
-                                                : 'bg-stone-300 text-stone-800'
-                                              : 'text-stone-500 hover:bg-stone-200'
-                                          }`}
-                                        >
-                                          {st === 'attended' ? '已點名' : st === 'absent' ? '未加練' : '待確認'}
-                                        </button>
-                                      ))}
-                                    </div>
-                                    <button
-                                      onClick={() => deleteAdminBooking(b.id)}
-                                      className="text-3xs text-stone-400 hover:text-rose-500 p-1"
-                                      title="刪除此筆"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-
-                                  <input
-                                    type="text"
-                                    placeholder="教練備註..."
-                                    className="w-full text-xs bg-white border border-stone-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-sienna-400"
-                                    value={b.note || ''}
-                                    onChange={(e) => {
-                                      setAdminBookings((prev) =>
-                                        prev.map((item) => (item.id === b.id ? { ...item, note: e.target.value } : item))
-                                      );
-                                    }}
-                                    onBlur={(e) => updateAdminBooking(b.id, { note: e.target.value })}
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* 社課出席紀錄 */}
-                        <div className="space-y-3">
-                          <h4 className="font-bold text-stone-800 text-sm flex items-center justify-between border-b border-stone-100 pb-2">
-                            <span className="flex items-center gap-1.5">
-                              <GraduationCap className="w-4 h-4 text-emerald-600" />
-                              社課簽到歷程 ({memberClassAttendance.length})
-                            </span>
-                          </h4>
-                          {memberClassAttendance.length === 0 ? (
-                            <p className="text-center py-8 text-stone-400 text-xs">尚無社課簽到紀錄</p>
-                          ) : (
-                            <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
-                              {memberClassAttendance.map((c) => (
-                                <div
-                                  key={c.id}
-                                  className="bg-emerald-50/40 border border-emerald-100/80 rounded-2xl p-3.5 flex justify-between items-center text-sm"
-                                >
-                                  <div>
-                                    <p className="font-bold text-stone-900">{c.sessionName}</p>
-                                    <p className="text-xs text-stone-500 mt-0.5">日期：{c.date}</p>
-                                    <p className="text-3xs text-stone-400 font-mono mt-0.5">
-                                      簽到時間：{new Date(c.checkedAt).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
-                                    </p>
-                                  </div>
-                                  <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-white border border-emerald-200 px-2.5 py-1 rounded-lg shrink-0">
-                                    <Check className="w-3.5 h-3.5" />
-                                    已出席
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {/* 搜尋列與統計 */}
-                <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
-                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
-                    <div>
-                      <h3 className="text-lg font-black text-stone-900 flex items-center gap-2">
-                        <User className="w-5 h-5 text-sienna-600" />
-                        全體社員名冊
-                      </h3>
-                      <p className="text-xs text-stone-500 mt-0.5">
-                        社員只要在「我的紀錄」首次綁定學號，即會自動新增至此名冊中
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="relative">
-                    <User className="w-5 h-5 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      placeholder="搜尋成員姓名或學號..."
-                      value={memberSearch}
-                      onChange={(e) => setMemberSearch(e.target.value)}
-                      className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 outline-none text-sm"
-                    />
-                  </div>
-
-                  {/* 成員清單網格 */}
-                  {(() => {
-                    const allNames = Array.from(
-                      new Set([
-                        ...memberPins.map((p) => p.realName),
-                        ...adminBookings.map((b) => b.realName),
-                      ])
-                    ).filter((name) => {
-                      const pin = memberPins.find((p) => p.realName === name)?.pin ?? '';
-                      return name.includes(memberSearch) || pin.includes(memberSearch);
-                    });
-
-                    if (allNames.length === 0) {
-                      return (
-                        <div className="text-center py-12 text-stone-400">
-                          <User className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                          <p className="text-sm">目前名冊尚無成員資料</p>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                        {allNames.map((name) => {
-                          const pin = memberPins.find((p) => p.realName === name)?.pin;
-                          const userBookings = adminBookings.filter((b) => b.realName === name);
-                          const attendedCount = userBookings.filter((b) => b.attendance_status === 'attended').length;
-                          const classCount = adminClassSessions.reduce(
-                            (acc, s) => acc + ((s.attendees || []).some((a) => a.realName === name) ? 1 : 0),
-                            0
-                          );
-
-                          return (
-                            <button
-                              key={name}
-                              onClick={() => setSelectedMember(name)}
-                              className="p-4 rounded-2xl border border-stone-200 bg-stone-50/70 hover:bg-sienna-50/80 hover:border-sienna-300 text-left transition-all group flex flex-col justify-between gap-3 shadow-2xs cursor-pointer"
-                            >
-                              <div className="flex justify-between items-start w-full">
-                                <div>
-                                  <p className="font-bold text-stone-900 text-base group-hover:text-sienna-800 transition-colors">
-                                    {name}
-                                  </p>
-                                  {pin ? (
-                                    <p className="text-xs font-mono text-stone-500 mt-0.5">學號: {pin}</p>
-                                  ) : (
-                                    <p className="text-3xs text-stone-400 mt-0.5">未綁定學號</p>
-                                  )}
-                                </div>
-                                <ChevronRight className="w-4 h-4 text-stone-400 group-hover:text-sienna-600 transition-colors shrink-0 mt-1" />
-                              </div>
-
-                              <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-stone-200/50 w-full text-3xs font-semibold">
-                                <span className="bg-sienna-100/70 text-sienna-800 px-2 py-0.5 rounded-md">
-                                  🏇 加練 {attendedCount} 次
-                                </span>
-                                <span className="bg-emerald-100/70 text-emerald-800 px-2 py-0.5 rounded-md">
-                                  📚 社課 {classCount} 堂
-                                </span>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                {/* ⚠️ 學期結算危險專區 */}
-                <div className="bg-rose-50/60 border-2 border-rose-200 rounded-3xl p-5 md:p-6 space-y-3">
-                  <div className="flex items-center gap-2 text-rose-800">
-                    <AlertCircle className="w-5 h-5 text-rose-600" />
-                    <h4 className="font-black text-base">學期末結算與重置專區</h4>
-                  </div>
-                  <p className="text-xs text-rose-700 leading-relaxed">
-                    學期結束重新計算時，可在此一鍵清除全體成員註冊名冊、加練預約紀錄與社課簽到名單。請謹慎操作！
-                  </p>
-                  <button
-                    onClick={() => {
-                      setShowClearAllModal(true);
-                      setClearAllConfirmText('');
-                    }}
-                    className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-colors shadow-xs"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    一鍵清空全體成員與歷史紀錄 (學期重置)
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Tab 3: 社課管理 (QR Code) */}
+        {/* ── Tab: 社課 QR Code 場次管理 (Screenshot 2) ── */}
         {adminTab === 'classes' && (
-          <div key="classes" className="space-y-6 animate-in fade-in zoom-in-[0.99] duration-150">
-            {/* 建立社課場次表單 */}
+          <div className="space-y-6">
+            {/* 建立新社課場次卡片 */}
             <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
-              <h3 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
-                <GraduationCap className="w-5 h-5 text-sienna-600" />
+              <h3 className="text-base font-bold text-stone-800 mb-4 flex items-center gap-2">
+                <GraduationCap className="w-5 h-5 text-amber-800" />
                 建立新社課場次
               </h3>
               <form onSubmit={handleCreateClassSession} className="grid sm:grid-cols-3 gap-3">
@@ -2114,7 +759,7 @@ export default function App() {
                   value={newClassName}
                   onChange={(e) => setNewClassName(e.target.value)}
                   placeholder="社課名稱 (例如: 正課理論與上下馬安全)"
-                  className="sm:col-span-2 px-4 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 outline-none text-sm"
+                  className="sm:col-span-2 px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-700 outline-none text-sm transition-all"
                 />
                 <div className="flex gap-2">
                   <input
@@ -2122,302 +767,215 @@ export default function App() {
                     required
                     value={newClassDate}
                     onChange={(e) => setNewClassDate(e.target.value)}
-                    className="flex-1 px-3 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 outline-none text-sm font-mono"
+                    className="flex-1 px-3 py-2.5 rounded-xl border border-stone-200 focus:border-amber-700 outline-none text-sm font-mono"
                   />
                   <button
                     type="submit"
-                    disabled={creatingClass}
-                    className="px-5 py-2.5 bg-sienna-600 text-white rounded-xl font-bold hover:bg-sienna-700 transition-colors text-sm shrink-0 disabled:opacity-60"
+                    className="px-5 py-2.5 bg-amber-800 hover:bg-amber-900 text-white rounded-xl font-bold text-sm shrink-0 transition-colors shadow-sm"
                   >
-                    {creatingClass ? '建立中…' : '建立場次'}
+                    建立場次
                   </button>
                 </div>
               </form>
             </div>
 
             {/* 場次列表 */}
-            <div className="space-y-4">
-              {adminClassSessions.map((session) => (
-                <div
-                  key={session.id}
-                  className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4"
-                >
-                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`w-2.5 h-2.5 rounded-full ${
-                            session.isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-rose-400'
-                          }`}
-                        />
-                        <h4 className="text-lg font-bold text-stone-900">{session.name}</h4>
-                      </div>
-                      <p className="text-xs text-stone-500 mt-0.5">
-                        日期：{session.date} · 已簽到人數：
-                        <span className="font-bold text-sienna-700 ml-1">
-                          {session.attendees?.length ?? 0} 人
-                        </span>
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        onClick={() => setActiveQrSession(session)}
-                        className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
-                      >
-                        <QrCode className="w-4 h-4 text-amber-700" />
-                        顯示 QR Code
-                      </button>
-
-                      <button
-                        onClick={() => setActiveAttendeesSession(session)}
-                        className="px-3.5 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-xl text-xs font-bold transition-colors"
-                      >
-                        檢視名冊 ({session.attendees?.length ?? 0})
-                      </button>
-
-                      <button
-                        onClick={() => handleToggleClassOpen(session.id, session.isOpen)}
-                        className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors ${
-                          session.isOpen
-                            ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                            : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
-                        }`}
-                      >
-                        {session.isOpen ? '點名開放中 (點此關閉)' : '點名已關閉 (點此開放)'}
-                      </button>
-
-                      <button
-                        onClick={() => handleDeleteClassSession(session.id)}
-                        className="p-2 text-stone-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-colors"
-                        title="刪除場次"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-
-              {adminClassSessions.length === 0 && (
-                <div className="text-center py-16 bg-white rounded-3xl border border-stone-200">
-                  <GraduationCap className="w-12 h-12 text-stone-300 mx-auto mb-2" />
-                  <p className="text-stone-500 font-medium">目前尚無社課場次，請上方表單建立</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Tab 4: 系統設定與 PIN */}
-        {adminTab === 'settings' && (
-          <div key="settings" className="space-y-6 animate-in fade-in zoom-in-[0.99] duration-150">
-            {/* 每日點名密碼 */}
-            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
-              <h3 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
-                <ClipboardCheck className="w-5 h-5 text-sienna-600" />
-                加練現場點名密碼
-              </h3>
-              <div className="bg-stone-50 rounded-2xl p-4 mb-4 flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-stone-500">今日加練點名 5 位數密碼：</p>
-                  <p className="text-2xl font-black text-sienna-700 font-mono tracking-widest mt-0.5">
-                    {checkinPwdDisplay || '—'}
-                  </p>
-                </div>
-                <span className="text-xs bg-amber-100 text-amber-800 font-semibold px-2.5 py-1 rounded-full">
-                  每日 00:00 自動更換
-                </span>
+            {classSessions.length === 0 ? (
+              <div className="bg-white p-12 rounded-3xl shadow-sm border border-stone-200 text-center text-stone-400">
+                <GraduationCap className="w-14 h-14 mx-auto mb-3 opacity-30 text-stone-400" />
+                <p className="text-sm font-bold text-stone-500">目前尚無社課場次，請上方表單建立</p>
               </div>
-              <form onSubmit={handleUpdateCheckinPwd} className="flex gap-2">
-                <input
-                  type="text"
-                  value={newCheckinPwd}
-                  onChange={(e) => setNewCheckinPwd(e.target.value)}
-                  placeholder="輸入新的點名密碼 (手動覆蓋)"
-                  className="flex-1 px-4 py-2 rounded-xl border border-stone-200 focus:border-sienna-500 outline-none text-sm font-mono"
-                />
-                <button
-                  type="submit"
-                  disabled={checkinPwdSubmitting || !newCheckinPwd.trim()}
-                  className="px-5 py-2 bg-sienna-600 text-white rounded-xl font-bold hover:bg-sienna-700 text-sm disabled:opacity-60 shrink-0"
-                >
-                  更新
-                </button>
-              </form>
-            </div>
-
-            {/* 社員 PIN 管理 */}
-            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
-              <h3 className="font-bold text-stone-800 flex items-center gap-2">
-                <KeyRound className="w-5 h-5 text-sienna-600" />
-                社員學號 (PIN) 綁定名冊
-              </h3>
-              <form onSubmit={handleAddPin} className="flex gap-2 flex-wrap">
-                <input
-                  type="text"
-                  value={newPinName}
-                  onChange={(e) => setNewPinName(e.target.value)}
-                  placeholder="本名"
-                  className="flex-1 min-w-28 px-3.5 py-2 rounded-xl border border-stone-200 focus:border-sienna-500 outline-none text-sm"
-                />
-                <input
-                  type="text"
-                  value={newPinCode}
-                  onChange={(e) => setNewPinCode(e.target.value)}
-                  placeholder="學號 (PIN)"
-                  className="w-36 px-3.5 py-2 rounded-xl border border-stone-200 focus:border-sienna-500 outline-none text-sm font-mono"
-                />
-                <button
-                  type="submit"
-                  disabled={pinSubmitting || !newPinName.trim() || !newPinCode.trim()}
-                  className="px-4 py-2 bg-sienna-600 text-white rounded-xl font-bold text-sm hover:bg-sienna-700 disabled:opacity-60 shrink-0"
-                >
-                  手動新增 / 更新
-                </button>
-              </form>
-              <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-                {memberPins.map((m) => (
+            ) : (
+              <div className="space-y-4">
+                {classSessions.map((session) => (
                   <div
-                    key={m.realName}
-                    className="flex items-center justify-between bg-stone-50 rounded-xl px-4 py-2.5 border border-stone-100 text-sm"
+                    key={session.id}
+                    className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4"
                   >
-                    <span className="font-bold text-stone-800">{m.realName}</span>
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono text-xs bg-white border border-stone-200 px-2.5 py-1 rounded-md text-sienna-700 font-bold">
-                        {m.pin}
-                      </span>
-                      {confirmDeletePin === m.realName ? (
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => handleDeletePin(m.realName)}
-                            className="text-xs bg-rose-600 text-white px-2 py-0.5 rounded font-bold"
-                          >
-                            確定
-                          </button>
-                          <button
-                            onClick={() => setConfirmDeletePin(null)}
-                            className="text-xs text-stone-500 px-1 py-0.5"
-                          >
-                            取消
-                          </button>
+                    <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`w-2.5 h-2.5 rounded-full ${
+                              session.isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-rose-400'
+                            }`}
+                          />
+                          <h4 className="text-lg font-black text-stone-800">{session.name}</h4>
                         </div>
-                      ) : (
+                        <p className="text-xs text-stone-500 mt-1 flex items-center gap-2 flex-wrap">
+                          <span>日期：{session.date}</span>
+                          <span>·</span>
+                          <span>
+                            場次代碼 (10字)：
+                            <button
+                              onClick={() => copySessionCode(session.id)}
+                              className="font-mono font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 hover:bg-amber-100 ml-1 inline-flex items-center gap-1"
+                              title="點擊複製代碼"
+                            >
+                              {session.id}
+                              {copiedSessionId === session.id ? (
+                                <Check className="w-3 h-3 text-emerald-600" />
+                              ) : (
+                                <Copy className="w-3 h-3 text-stone-400" />
+                              )}
+                            </button>
+                          </span>
+                          <span>·</span>
+                          <span>
+                            已簽到人數：
+                            <span className="font-bold text-emerald-700 ml-1">
+                              {session.attendees.length} 人
+                            </span>
+                          </span>
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
                         <button
-                          onClick={() => setConfirmDeletePin(m.realName)}
-                          className="text-stone-400 hover:text-rose-500 p-1"
+                          onClick={() => setActiveQrSession(session)}
+                          className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
+                        >
+                          <QrCode className="w-4 h-4 text-amber-700" />
+                          顯示 QR Code
+                        </button>
+
+                        <button
+                          onClick={() => setActiveAttendeesSession(session)}
+                          className="px-3.5 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-xl text-xs font-bold transition-colors"
+                        >
+                          檢視名冊 ({session.attendees.length})
+                        </button>
+
+                        <button
+                          onClick={() => handleToggleClassOpen(session.id, session.isOpen)}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors ${
+                            session.isOpen
+                              ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                              : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
+                          }`}
+                        >
+                          {session.isOpen ? '點名開放中 (點此關閉)' : '點名已關閉 (點此開放)'}
+                        </button>
+
+                        <button
+                          onClick={() => handleDeleteClassSession(session.id)}
+                          className="p-2 text-stone-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-colors"
+                          title="刪除場次"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
-                      )}
+                      </div>
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            )}
           </div>
         )}
 
-        {/* Modal: QR Code 投影視窗 */}
-        {activeQrSession && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden text-center p-6 space-y-5">
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
-                  現場掃碼點名
-                </span>
-                <button
-                  onClick={() => setActiveQrSession(null)}
-                  className="p-1 rounded-full text-stone-400 hover:bg-stone-100"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+        {/* ── Tab: 加練預約總覽 ── */}
+        {adminTab === 'overview' && (
+          <div className="space-y-6">
+            {dates.map((dateObj) => {
+              const dateBookings = bookings.filter((b) => b.date === dateObj.value);
+              if (dateBookings.length === 0) return null;
 
-              <div>
-                <h3 className="text-xl font-black text-stone-900">{activeQrSession.name}</h3>
-                <p className="text-xs text-stone-500 mt-0.5">日期：{activeQrSession.date}</p>
-              </div>
-
-              {/* QR Code Canvas */}
-              <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 inline-block">
-                <QrCanvas url={getCheckinUrl(activeQrSession.id)} size={220} />
-              </div>
-
-              <div className="space-y-2">
-                <button
-                  onClick={() => copyToClipboard(getCheckinUrl(activeQrSession.id))}
-                  className="w-full py-2.5 bg-stone-900 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-stone-800 transition-colors"
-                >
-                  {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  {copiedLink ? '已複製點名專屬網址！' : '複製點名網址'}
-                </button>
-                <a
-                  href={getCheckinUrl(activeQrSession.id)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="w-full py-2 bg-stone-100 text-stone-700 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 hover:bg-stone-200 transition-colors"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  開啟學生端點名頁
-                </a>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Modal: 檢視出席名冊 */}
-        {activeAttendeesSession && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden p-6 space-y-4">
-              <div className="flex justify-between items-center border-b border-stone-100 pb-3">
-                <div>
-                  <h3 className="font-bold text-stone-900 text-lg">
-                    {activeAttendeesSession.name} 出席名冊
+              return (
+                <div key={dateObj.value} className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200">
+                  <h3 className="text-base font-black text-amber-800 mb-4 border-b border-stone-100 pb-3 flex items-center gap-2">
+                    <Dumbbell className="w-5 h-5 text-amber-700" />
+                    {dateObj.display} 加練預約名冊
                   </h3>
-                  <p className="text-xs text-stone-500">
-                    共 {activeAttendeesSession.attendees?.length ?? 0} 人完成簽到
-                  </p>
-                </div>
-                <button
-                  onClick={() => setActiveAttendeesSession(null)}
-                  className="p-1 rounded-full text-stone-400 hover:bg-stone-100"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                {(activeAttendeesSession.attendees?.length ?? 0) === 0 ? (
-                  <p className="text-center py-8 text-stone-400 text-xs">目前尚無人簽到</p>
-                ) : (
-                  activeAttendeesSession.attendees?.map((a, idx) => (
-                    <div
-                      key={a.id}
-                      className="flex items-center justify-between bg-stone-50 rounded-xl p-3 border border-stone-100 text-sm"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 text-3xs font-bold flex items-center justify-center">
-                          {idx + 1}
-                        </span>
-                        <span className="font-bold text-stone-800">{a.realName}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-3xs text-stone-400 font-mono">
-                          {new Date(a.checkedAt).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
-                        </span>
+                  <div className="space-y-3">
+                    {dateBookings.map((b) => (
+                      <div
+                        key={b.id}
+                        className="bg-amber-50/60 rounded-2xl p-4 border border-amber-100 flex justify-between items-center"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 font-bold">
+                            <Clock className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className="font-bold text-stone-800">{b.time}</p>
+                            <p className="text-xs text-stone-600 mt-0.5">
+                              {b.nickname} ({b.realName}) {b.studentId && `· 學號：${b.studentId}`}
+                            </p>
+                          </div>
+                        </div>
                         <button
-                          onClick={() => handleDeleteAttendee(a.id)}
-                          className="text-stone-400 hover:text-rose-500 p-1"
-                          title="刪除此簽到"
+                          onClick={() => handleCancelBooking(b.id)}
+                          className="text-xs font-bold text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-200 transition-colors"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          取消
                         </button>
                       </div>
-                    </div>
-                  ))
-                )}
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+
+            {bookings.length === 0 && (
+              <div className="text-center py-16 bg-white rounded-3xl border border-stone-200 shadow-sm text-stone-400">
+                <Dumbbell className="w-12 h-12 mx-auto mb-3 opacity-30 text-stone-400" />
+                <p className="text-base font-bold text-stone-600">目前沒有加練預約紀錄</p>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Tab: 成員出席名冊總覽 ── */}
+        {adminTab === 'members' && (
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
+            <h3 className="text-base font-black text-stone-800 flex items-center gap-2">
+              <Users className="w-5 h-5 text-amber-800" />
+              社課累積出席總表
+            </h3>
+            {allAttendanceList.length === 0 ? (
+              <p className="text-xs text-stone-400 py-8 text-center">尚無任何簽到紀錄</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-stone-700">
+                  <thead className="bg-stone-50 text-stone-500 font-bold border-b border-stone-100">
+                    <tr>
+                      <th className="py-3 px-3">學號 (PIN)</th>
+                      <th className="py-3 px-3">綽號</th>
+                      <th className="py-3 px-3">真實姓名</th>
+                      <th className="py-3 px-3">出席社課</th>
+                      <th className="py-3 px-3">社課日期</th>
+                      <th className="py-3 px-3">簽到時間</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {allAttendanceList.map((a, i) => (
+                      <tr key={i} className="hover:bg-stone-50/80">
+                        <td className="py-3 px-3 font-mono font-bold text-stone-900">{a.studentId}</td>
+                        <td className="py-3 px-3 font-bold">{a.nickname}</td>
+                        <td className="py-3 px-3">{a.realName}</td>
+                        <td className="py-3 px-3 text-emerald-800 font-semibold">{a.sessionName}</td>
+                        <td className="py-3 px-3">{a.sessionDate}</td>
+                        <td className="py-3 px-3 text-stone-400">{a.checkedAt}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Tab: 設定與 PIN ── */}
+        {adminTab === 'settings' && (
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
+            <h3 className="text-base font-black text-stone-800 flex items-center gap-2">
+              <Settings className="w-5 h-5 text-amber-800" />
+              系統設定與權限資訊
+            </h3>
+            <div className="p-4 bg-stone-50 rounded-2xl border border-stone-100 text-xs text-stone-600 space-y-2">
+              <p>• 預設幹部管理員密碼：<code className="bg-stone-200 px-2 py-0.5 rounded font-mono font-bold">admin123</code></p>
+              <p>• 點名代碼生成長度：<code className="bg-stone-200 px-2 py-0.5 rounded font-mono font-bold">10 位隨機英數組合</code></p>
+              <p>• 加練時間規則：<code className="bg-stone-200 px-2 py-0.5 rounded font-mono font-bold">09:00~12:00 / 14:00~19:00，滿 2 小時</code></p>
             </div>
           </div>
         )}
@@ -2425,58 +983,127 @@ export default function App() {
     );
   };
 
-  // ═════════════════════════════════════════════════════════════
-  // 視圖 4: 用戶主頁 (加練預約 & 社課出席)
-  // ═════════════════════════════════════════════════════════════
+  // ─────────────────── 學生首頁視圖 ─────────────────────────────────────────
   const renderUserView = () => (
-    <div className="space-y-6">
-      {/* Tab Switcher: 加練預約 vs 社課出席 */}
-      <div className="flex bg-stone-200/70 p-1.5 rounded-2xl max-w-sm mx-auto border border-stone-300/40 shadow-inner">
-        <button
-          onClick={() => setUserTab('booking')}
-          className={`flex-1 py-2.5 text-xs md:text-sm font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
-            userTab === 'booking'
-              ? 'bg-white text-sienna-800 shadow-sm'
-              : 'text-stone-600 hover:text-stone-900'
-          }`}
-        >
-          <Calendar className="w-4 h-4 text-sienna-600" />
-          加練預約
-        </button>
-        <button
-          onClick={() => setUserTab('class')}
-          className={`flex-1 py-2.5 text-xs md:text-sm font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
-            userTab === 'class'
-              ? 'bg-white text-sienna-800 shadow-sm'
-              : 'text-stone-600 hover:text-stone-900'
-          }`}
-        >
-          <GraduationCap className="w-4 h-4 text-emerald-600" />
-          社課點名與紀錄
-        </button>
-      </div>
+    <div className="grid md:grid-cols-3 gap-8 animate-in fade-in duration-200">
+      <div className="md:col-span-2 space-y-6">
+        {/* 頂部 Tab：社課現場點名 / 加練預約 / 社課出席紀錄 */}
+        <div className="flex gap-2 bg-white p-1.5 rounded-2xl border border-stone-200 shadow-sm">
+          <button
+            onClick={() => setUserTab('社課點名')}
+            className={`flex-1 py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
+              userTab === '社課點名'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-200'
+                : 'text-stone-600 hover:bg-stone-100'
+            }`}
+          >
+            <QrCode className="w-4 h-4" />
+            社課現場點名
+          </button>
+          <button
+            onClick={() => setUserTab('加練')}
+            className={`flex-1 py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
+              userTab === '加練'
+                ? 'bg-amber-600 text-white shadow-md shadow-amber-200'
+                : 'text-stone-600 hover:bg-stone-100'
+            }`}
+          >
+            <Dumbbell className="w-4 h-4" />
+            加練時段預約
+          </button>
+          <button
+            onClick={() => setUserTab('出席紀錄')}
+            className={`flex-1 py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
+              userTab === '出席紀錄'
+                ? 'bg-stone-900 text-white shadow-md'
+                : 'text-stone-600 hover:bg-stone-100'
+            }`}
+          >
+            <ClipboardList className="w-4 h-4" />
+            出席紀錄
+          </button>
+        </div>
 
-      {userTab === 'booking' ? (
-        <div className="grid md:grid-cols-3 gap-8 animate-in fade-in duration-300 w-full">
-          {/* Main Booking Section */}
-          <div className="md:col-span-2 space-y-6 min-w-0 w-full">
-            {/* 選擇日期 */}
-            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200/80 overflow-hidden">
-              <div className="flex items-center gap-2 mb-4">
-                <Calendar className="w-5 h-5 text-sienna-600" />
-                <h2 className="text-xl font-bold text-stone-800">
-                  選擇日期 <span className="text-lg ml-1">🐎</span>
-                </h2>
+        {/* ── 1. 社課現場 QR Code 點名 (Screenshot 1) ── */}
+        {userTab === '社課點名' && (
+          <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-200 text-center space-y-6">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto shadow-xs">
+              <QrCode className="w-8 h-8" />
+            </div>
+
+            <div>
+              <h3 className="text-2xl font-black text-stone-800">社課現場 QR Code 點名</h3>
+              <p className="text-xs md:text-sm text-stone-500 mt-1 max-w-md mx-auto leading-relaxed">
+                到場參加社課時，請使用手機相機直接掃描教練或幹部展示的 QR Code 完成點名簽到。
+              </p>
+            </div>
+
+            {/* 3 步驟指示卡片 (Screenshot 1) */}
+            <div className="grid sm:grid-cols-3 gap-3 text-left">
+              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-1">
+                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">
+                  1
+                </span>
+                <p className="font-bold text-stone-800 text-sm">手機掃碼</p>
+                <p className="text-xs text-stone-500">掃描現場專屬 QR Code</p>
               </div>
-              <div className="flex overflow-x-auto gap-2.5 pb-2">
+
+              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-1">
+                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">
+                  2
+                </span>
+                <p className="font-bold text-stone-800 text-sm">輸入學號</p>
+                <p className="text-xs text-stone-500">輸入個人學號 (PIN)</p>
+              </div>
+
+              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-1">
+                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">
+                  3
+                </span>
+                <p className="font-bold text-stone-800 text-sm">完成簽到</p>
+                <p className="text-xs text-stone-500">系統即時記錄出席</p>
+              </div>
+            </div>
+
+            {/* 手動輸入場次代碼備案 (Screenshot 1: 支援 10 字代碼) */}
+            <div className="pt-4 border-t border-stone-100 text-left space-y-2">
+              <p className="text-xs font-bold text-stone-600">相機無法掃描？手動輸入場次代碼：</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={manualSessionIdInput}
+                  onChange={(e) => setManualSessionIdInput(e.target.value)}
+                  placeholder="輸入 10 位場次代碼 (例如: A8k9X2mP4q)"
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 text-xs outline-none focus:border-emerald-500 font-mono transition-all"
+                />
+                <button
+                  onClick={handleManualSessionGo}
+                  className="px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition-colors shrink-0 shadow-sm"
+                >
+                  前往點名
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── 2. 加練預約 (iOS Drum Roll 選擇器) ── */}
+        {userTab === '加練' && (
+          <>
+            <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200">
+              <div className="flex items-center gap-2 mb-4">
+                <Calendar className="w-5 h-5 text-amber-600" />
+                <h2 className="text-base font-black text-stone-800">1. 選擇加練日期</h2>
+              </div>
+              <div className="flex overflow-x-auto gap-2 pb-1">
                 {dates.map((d) => (
                   <button
                     key={d.value}
                     onClick={() => setSelectedDate(d.value)}
-                    className={`whitespace-nowrap px-4 py-2.5 rounded-2xl text-sm font-bold transition-all ${
+                    className={`whitespace-nowrap px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
                       selectedDate === d.value
-                        ? 'bg-sienna-600 text-white shadow-md shadow-sienna-600/20'
-                        : 'bg-stone-100 text-stone-600 hover:bg-stone-200/80'
+                        ? 'bg-amber-600 text-white shadow-md shadow-amber-200'
+                        : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                     }`}
                   >
                     {d.display}
@@ -2485,511 +1112,402 @@ export default function App() {
               </div>
             </div>
 
-            {/* 選擇時段 */}
-            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200/80 w-full overflow-hidden">
-              <div className="flex items-center gap-2 mb-4">
-                <Clock className="w-5 h-5 text-sienna-600" />
-                <h2 className="text-xl font-bold text-stone-800">選擇時段</h2>
-                {loading && (
-                  <span className="ml-auto text-xs text-stone-400 animate-pulse">載入中…</span>
-                )}
+            <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-amber-600" />
+                  <h2 className="text-base font-black text-stone-800">2. 滑動選擇起訖時間</h2>
+                </div>
+                <span className="text-xs bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full font-bold">
+                  15 分鐘刻度
+                </span>
+              </div>
+              <p className="text-xs text-stone-400 mb-5">
+                開放時段：09:00–12:00 或 14:00–19:00（單次最少需滿 2 小時）
+              </p>
+
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <p className="text-xs font-bold text-stone-500 uppercase tracking-wider text-center mb-2">
+                    開始時間
+                  </p>
+                  <DrumRollPicker
+                    items={PRACTICE_TIMES}
+                    value={practiceStart}
+                    onChange={(v) => {
+                      setPracticeStart(v);
+                      setPracticeError('');
+                    }}
+                  />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-stone-500 uppercase tracking-wider text-center mb-2">
+                    結束時間
+                  </p>
+                  <DrumRollPicker
+                    items={PRACTICE_TIMES}
+                    value={practiceEnd}
+                    onChange={(v) => {
+                      setPracticeEnd(v);
+                      setPracticeError('');
+                    }}
+                  />
+                </div>
               </div>
 
-              {/* 週五晨練專區 (功能保留，前台預設隱藏) */}
-              {SHOW_MORNING_TRAINING && isFriday(selectedDate) && (
-                <div className="mb-4 p-4 md:p-5 bg-gradient-to-r from-amber-50 to-amber-100/50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center gap-3.5 shadow-2xs">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-black text-amber-900 text-sm md:text-base flex items-center gap-1.5">
-                      <Sparkles className="w-4 h-4 text-amber-600" />
-                      週五固定晨練時段
-                    </p>
-                    <p className="text-xs text-amber-700 mt-0.5">
-                      06:00 ~ 08:00 · 晨光馬術訓練，免選具體時間快速報名
+              {/* 即時時長計算 */}
+              <div className="flex items-center justify-center gap-2 bg-amber-50/80 border border-amber-100 rounded-2xl p-3.5 mb-4">
+                <Clock className="w-4 h-4 text-amber-700 shrink-0" />
+                <span className="text-amber-900 font-bold text-xs sm:text-sm">
+                  {practiceStart} － {practiceEnd}
+                  {(() => {
+                    const diff = timeToMins(practiceEnd) - timeToMins(practiceStart);
+                    if (diff <= 0) return '';
+                    const h = Math.floor(diff / 60);
+                    const m = diff % 60;
+                    return `（共計 ${h > 0 ? `${h} 小時 ` : ''}${m > 0 ? `${m} 分鐘` : ''}）`;
+                  })()}
+                </span>
+              </div>
+
+              {practiceError && (
+                <div className="flex items-start gap-2 bg-rose-50 text-rose-700 border border-rose-100 rounded-2xl p-3.5 mb-4 text-xs font-semibold">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  {practiceError}
+                </div>
+              )}
+
+              <button
+                onClick={handlePracticeBookClick}
+                className="w-full py-4 bg-amber-600 text-white rounded-2xl font-black text-sm hover:bg-amber-700 shadow-md shadow-amber-200 transition-all flex items-center justify-center gap-2"
+              >
+                確認此時段並填寫預約資料
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── 3. 社課出席紀錄查詢 ── */}
+        {userTab === '出席紀錄' && (
+          <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200">
+            <div className="flex items-center gap-2 mb-1">
+              <ClipboardList className="w-5 h-5 text-emerald-600" />
+              <h2 className="text-base font-black text-stone-800">查詢社課出席紀錄</h2>
+            </div>
+            <p className="text-xs text-stone-400 mb-5">
+              輸入學號、綽號或真實姓名，即時檢視歷史出席紀錄與成就徽章！
+            </p>
+
+            <div className="relative mb-6">
+              <Search className="w-5 h-5 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={attendanceQuery}
+                onChange={(e) => setAttendanceQuery(e.target.value)}
+                className="w-full pl-11 pr-4 py-3 rounded-2xl border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 outline-none text-sm transition-all"
+                placeholder="輸入學號、綽號或真實姓名搜尋..."
+              />
+            </div>
+
+            {attendanceQuery.trim() === '' ? (
+              <div className="text-center py-10 text-stone-400 bg-stone-50 rounded-2xl border border-dashed border-stone-200">
+                <Search className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                <p className="text-xs font-semibold">在上方輸入姓名或學號以檢索出席紀錄</p>
+              </div>
+            ) : matchedAttendance.length === 0 ? (
+              <div className="text-center py-10 text-stone-400 bg-stone-50 rounded-2xl border border-dashed border-stone-200">
+                <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-40 text-stone-400" />
+                <p className="text-xs font-semibold">找不到「{attendanceQuery}」的出席紀錄</p>
+                <p className="text-3xs text-stone-400 mt-1">請確認輸入之學號或姓名是否與簽到一致</p>
+              </div>
+            ) : (
+              <div className="space-y-4 animate-in fade-in">
+                {/* 榮譽徽章卡片 */}
+                <div className={`p-4 rounded-2xl border ${riderBadge.border} ${riderBadge.bg} flex items-center justify-between`}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-white shadow-xs flex items-center justify-center">
+                      <Sparkles className="w-5 h-5 text-amber-500" />
+                    </div>
+                    <div>
+                      <p className="text-3xs font-bold text-stone-500 uppercase tracking-wider">馬術社榮譽成就</p>
+                      <h4 className={`text-base font-black ${riderBadge.color}`}>{riderBadge.title}</h4>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xl font-black text-stone-800">{matchedAttendance.length}</p>
+                    <p className="text-3xs font-bold text-stone-400">出席堂數</p>
+                  </div>
+                </div>
+
+                {/* 出席歷史列表 */}
+                <div className="space-y-2">
+                  <p className="text-xs font-bold text-stone-500 uppercase tracking-wider px-1">出席清單</p>
+                  {matchedAttendance.map((r, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-3 bg-emerald-50/50 rounded-2xl p-3.5 border border-emerald-100"
+                    >
+                      <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                        <CheckCircle2 className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-stone-800 text-xs sm:text-sm truncate">{r.sessionName}</p>
+                        <p className="text-3xs text-stone-500 mt-0.5">
+                          {r.sessionDate} · 簽到時間 {r.checkedAt} · 學號 {r.studentId}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 側邊欄：我的加練預約 */}
+      <div className="space-y-6">
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-200">
+          <div className="flex items-center gap-2 mb-4">
+            <Dumbbell className="w-5 h-5 text-amber-600" />
+            <h2 className="text-base font-black text-stone-800">我的加練預約</h2>
+          </div>
+
+          {myBookingsList.length === 0 ? (
+            <div className="text-center py-10 text-stone-400 flex flex-col items-center bg-stone-50 rounded-2xl border border-dashed border-stone-200">
+              <Dumbbell className="w-8 h-8 mb-2 opacity-30" />
+              <p className="text-xs font-bold">目前無已預約的加練時段</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {myBookingsList.map((booking) => (
+                <div
+                  key={booking.id}
+                  className="p-4 rounded-2xl border border-amber-200/80 bg-amber-50/60 relative group transition-all"
+                >
+                  <div className="pr-8">
+                    <p className="text-xs font-bold text-amber-800">{booking.date}</p>
+                    <p className="font-black text-stone-800 text-sm mt-0.5">{booking.time}</p>
+                    <p className="text-xs text-stone-500 mt-1">
+                      {booking.nickname} ({booking.realName})
                     </p>
                   </div>
                   <button
-                    onClick={() => handleMorningTrainingClick(selectedDate)}
-                    disabled={loading}
-                    className="shrink-0 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl shadow-sm transition-colors text-sm disabled:opacity-60"
+                    onClick={() => handleCancelBooking(booking.id)}
+                    className="absolute top-3 right-3 p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                    title="取消預約"
                   >
-                    🏇 報名週五晨練
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
-              )}
-
-              {/* 時段卡片 */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 w-full">
-                {getTimeSlots(selectedDate).map((time) => {
-                  const slotBookings = getSlotBookings(selectedDate, time);
-                  return (
-                    <button
-                      key={time}
-                      disabled={loading}
-                      onClick={() => handleBookClick(selectedDate, time)}
-                      className="relative flex flex-col p-4 md:p-5 rounded-2xl border text-left transition-all w-full min-w-0 bg-white border-stone-200/90 hover:border-sienna-500 hover:shadow-md cursor-pointer group"
-                    >
-                      <span className="text-base sm:text-lg font-bold truncate w-full text-stone-800 group-hover:text-sienna-700 transition-colors">
-                        {time}
-                      </span>
-                      <div className="flex justify-between items-center mt-3 w-full gap-1">
-                        <span className="text-xs font-semibold text-sienna-600 bg-sienna-50 px-2.5 py-1 rounded-lg">
-                          開放加練中
-                        </span>
-                        <span className="text-xs text-stone-400">已預約 {slotBookings.length} 人</span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+              ))}
             </div>
-          </div>
-
-          {/* Sidebar: 我的加練預約 */}
-          <div className="space-y-6 min-w-0 w-full">
-            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200/80 overflow-hidden">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <User className="w-5 h-5 text-sienna-600" />
-                  <h2 className="text-xl font-bold text-stone-800">我的預約</h2>
-                </div>
-                <span className="text-3xs bg-stone-100 text-stone-500 px-2 py-0.5 rounded-full font-mono">
-                  本機保存
-                </span>
-              </div>
-
-              {myBookings.length === 0 ? (
-                <div className="text-center py-8 text-stone-400 flex flex-col items-center">
-                  <AlertCircle className="w-8 h-8 mb-2 opacity-40" />
-                  <p className="text-sm">目前尚無預約紀錄</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {myBookings.map((booking) => {
-                    const isToday = booking.date === today;
-                    const alreadyCheckedIn = checkinSuccess === booking.id;
-                    return (
-                      <div
-                        key={booking.id}
-                        className="rounded-2xl border border-stone-200/70 bg-stone-50/70 p-3.5 relative overflow-hidden"
-                      >
-                        {confirmCancelId === booking.id ? (
-                          <div className="space-y-2">
-                            <p className="text-xs font-bold text-rose-700">確定取消此筆預約？</p>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={confirmCancel}
-                                className="flex-1 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-colors"
-                              >
-                                確定取消
-                              </button>
-                              <button
-                                onClick={() => setConfirmCancelId(null)}
-                                className="flex-1 py-1.5 rounded-xl border border-stone-300 text-stone-600 text-xs font-semibold hover:bg-stone-100 transition-colors"
-                              >
-                                保留
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="pr-7">
-                              <p className="font-bold text-stone-800 text-sm">{booking.date}</p>
-                              <p className="text-xs text-stone-600 mt-0.5">{booking.time}</p>
-                              <p className="text-3xs text-stone-400 mt-1">預約暱稱：{booking.nickname}</p>
-                            </div>
-
-                            <button
-                              onClick={() => handleCancel(booking.id)}
-                              className="absolute top-3 right-3 p-1.5 text-stone-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
-                              title="取消預約"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-
-                            {/* 點名按鈕 (當日限定) */}
-                            {isToday && (
-                              <div className="mt-3 pt-2.5 border-t border-stone-200/50">
-                                {alreadyCheckedIn ? (
-                                  <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-100/80 px-2.5 py-1 rounded-lg">
-                                    <CheckCircle2 className="w-3.5 h-3.5" />
-                                    已完成現場點名
-                                  </span>
-                                ) : (
-                                  <button
-                                    onClick={() => {
-                                      setCheckinBookingId(booking.id);
-                                      setCheckinError('');
-                                      setCheckinPassword('');
-                                    }}
-                                    className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 py-2 rounded-xl transition-colors shadow-xs"
-                                  >
-                                    <ClipboardCheck className="w-3.5 h-3.5" />
-                                    🏁 現場加練點名
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
+          )}
         </div>
-      ) : (
-        /* 社課點名與紀錄 Tab */
-        <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in duration-300">
-          <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-200/80 text-center space-y-5">
-            <div className="w-16 h-16 bg-emerald-50 border border-emerald-200/80 rounded-3xl flex items-center justify-center mx-auto shadow-inner text-emerald-600">
-              <QrCode className="w-8 h-8" />
-            </div>
-            <div>
-              <h3 className="text-2xl font-bold text-stone-800">社課現場 QR Code 點名</h3>
-              <p className="text-sm text-stone-500 mt-1 max-w-md mx-auto">
-                到場參加社課時，請使用手機相機直接掃描教練或幹部展示的 QR Code 完成點名簽到。
-              </p>
-            </div>
-
-            <div className="grid sm:grid-cols-3 gap-3 text-left">
-              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-1">
-                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">
-                  1
-                </span>
-                <p className="font-bold text-stone-800 text-sm">手機掃碼</p>
-                <p className="text-3xs text-stone-500">掃描現場專屬 QR Code</p>
-              </div>
-              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-1">
-                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">
-                  2
-                </span>
-                <p className="font-bold text-stone-800 text-sm">輸入學號</p>
-                <p className="text-3xs text-stone-500">輸入個人學號 (PIN)</p>
-              </div>
-              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-1">
-                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">
-                  3
-                </span>
-                <p className="font-bold text-stone-800 text-sm">完成簽到</p>
-                <p className="text-3xs text-stone-500">系統即時記錄出席</p>
-              </div>
-            </div>
-
-            {/* 手動輸入場次 ID 備案 */}
-            <div className="pt-4 border-t border-stone-100 text-left space-y-2">
-              <p className="text-xs font-semibold text-stone-600">相機無法掃描？手動輸入場次代碼：</p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={manualSessionIdInput}
-                  onChange={(e) => setManualSessionIdInput(e.target.value)}
-                  placeholder="輸入場次代碼 (例如: cls_...)"
-                  className="flex-1 px-3.5 py-2 rounded-xl border border-stone-200 text-xs outline-none focus:border-emerald-500 font-mono"
-                />
-                <button
-                  onClick={() => {
-                    if (manualSessionIdInput.trim()) {
-                      window.location.hash = `#/class-checkin?session=${manualSessionIdInput.trim()}`;
-                    }
-                  }}
-                  className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition-colors shrink-0"
-                >
-                  前往點名
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 
-  // ═════════════════════════════════════════════════════════════
-  // 全域主視圖排版
-  // ═════════════════════════════════════════════════════════════
+  // ─────────────────── 全域渲染 ─────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-stone-100/60 text-stone-900 font-sans p-4 md:p-8 relative w-full overflow-x-hidden max-w-[100vw]">
-      {/* 頂部快捷按鈕列 */}
+    <div className="min-h-screen bg-stone-100/70 text-stone-900 font-sans p-4 md:p-8 relative w-full overflow-x-hidden">
+      {/* 頂部切換後台按鈕 */}
       <div className="absolute top-4 right-4 md:top-8 md:right-8 flex items-center gap-2 z-10">
         <button
-          onClick={() => setView(view === 'member' ? 'user' : 'member')}
-          className={`flex items-center gap-1.5 px-3.5 py-2 border text-xs md:text-sm font-bold rounded-xl transition-all shadow-xs ${
-            view === 'member'
-              ? 'bg-sienna-600 text-white border-sienna-600'
-              : 'bg-white border-stone-200/90 text-stone-700 hover:bg-stone-50 hover:text-sienna-600'
-          }`}
-        >
-          <KeyRound className="w-4 h-4" />
-          <span>{view === 'member' ? '返回首頁' : '我的紀錄'}</span>
-        </button>
-
-        <button
           onClick={() => setView(view === 'admin' ? 'user' : 'admin')}
-          className={`flex items-center gap-1.5 px-3.5 py-2 border text-xs md:text-sm font-bold rounded-xl transition-all shadow-xs ${
-            view === 'admin'
-              ? 'bg-stone-900 text-white border-stone-900'
-              : 'bg-white border-stone-200/90 text-stone-700 hover:bg-stone-50'
-          }`}
+          className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-stone-200 text-stone-700 rounded-xl text-xs font-bold hover:bg-stone-50 hover:text-amber-800 transition-all shadow-xs"
         >
           <Shield className="w-4 h-4" />
-          <span>{view === 'admin' ? '返回首頁' : '幹部後台'}</span>
+          <span>{view === 'admin' ? '返回社員頁' : '幹部後台'}</span>
         </button>
       </div>
 
-      <div className="max-w-4xl mx-auto space-y-6 pt-12 md:pt-0 w-full">
+      <div className="max-w-4xl mx-auto space-y-6 pt-10 md:pt-0 w-full">
         {/* Header */}
-        <header className="text-center space-y-2 px-2 md:px-0">
-          <div className="inline-flex items-center gap-1.5 px-3.5 py-1 bg-sienna-50 border border-sienna-200/70 rounded-full text-xs font-bold text-sienna-800 mb-1 shadow-2xs">
+        <header className="text-center space-y-2">
+          <div className="inline-flex items-center gap-1.5 px-3.5 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs font-bold text-amber-900 mb-1 shadow-2xs">
             <span>🐎</span> 馬術社訓練預約與社課系統
           </div>
           <h1 className="text-3xl md:text-4xl font-black text-stone-800 tracking-tight">
             {view === 'user'
               ? '馬術社加練與社課系統'
               : view === 'admin'
-              ? '管理員幹部後台'
-              : '個人訓練與出席歷程'}
+              ? '管理員控制台 / 幹部後台'
+              : '社課現場點名簽到'}
           </h1>
           <p className="text-xs md:text-sm text-stone-500">
             {view === 'user'
-              ? '免登入即可預約加練時段 · 現場掃描 QR Code 點名'
+              ? '加練時段預約、社課現場 QR 點名、出席紀錄查詢'
               : view === 'admin'
               ? '統整管理加練名冊、社課 QR Code 場次與點名密碼'
-              : '查看個人總加練時數與社課出席紀錄'}
+              : '請確認場次資訊並輸入學號完成簽到'}
           </p>
         </header>
 
-        {view === 'user' ? renderUserView() : view === 'admin' ? renderAdminView() : renderMemberView()}
+        {view === 'user' ? renderUserView() : renderAdminView()}
       </div>
 
-      {/* Booking Modal */}
-      {view === 'user' && showModal && bookingSlot && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden">
-            <div className="p-6 border-b border-stone-100 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-stone-800">
-                {morningTraining ? '🌅 報名週五晨練' : '填寫預約資料'}
-              </h3>
+      {/* ── 後台專用：QR Code Modal ── */}
+      {activeQrSession && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 max-w-sm w-full text-center border border-stone-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-black text-stone-800 text-lg">現場簽到 QR Code</h3>
               <button
-                onClick={() => {
-                  setShowModal(false);
-                  setMorningTraining(false);
-                }}
+                onClick={() => setActiveQrSession(null)}
                 className="text-stone-400 hover:text-stone-600 p-1 rounded-full hover:bg-stone-100"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              {morningTraining ? (
-                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-900 space-y-1">
-                  <p className="font-bold">週五固定晨練</p>
-                  <p>{bookingSlot.date}　時段：06:00 ~ 08:00</p>
-                  <p className="text-3xs text-amber-700">填寫真實姓名與暱稱即可送出</p>
-                </div>
+            <p className="font-bold text-emerald-800 text-sm mb-1">{activeQrSession.name}</p>
+            <p className="text-xs text-stone-500 mb-4">日期：{activeQrSession.date}</p>
+
+            <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 inline-block shadow-inner">
+              {qrModalDataUrl ? (
+                <img src={qrModalDataUrl} alt="QR Code" width={260} height={260} className="rounded-xl" />
               ) : (
-                <div className="bg-sienna-50 border border-sienna-200 rounded-2xl p-3.5 text-xs text-sienna-900 space-y-1">
-                  <p className="font-bold">您正在預約：</p>
-                  <p className="text-sm font-semibold">
-                    {bookingSlot.date} {bookingSlot.time}
-                  </p>
+                <div className="w-[260px] h-[260px] flex items-center justify-center">
+                  <RefreshCw className="w-8 h-8 text-stone-400 animate-spin" />
                 </div>
               )}
+            </div>
+
+            <div className="mt-4 p-3 bg-amber-50 rounded-xl border border-amber-100 text-xs text-stone-700 flex justify-between items-center">
+              <span>場次代碼 (10字)：<span className="font-mono font-bold text-amber-900">{activeQrSession.id}</span></span>
+              <button
+                onClick={() => copySessionCode(activeQrSession.id)}
+                className="text-xs font-bold px-2 py-1 bg-white border border-amber-200 rounded text-amber-800 hover:bg-amber-100"
+              >
+                {copiedSessionId === activeQrSession.id ? '已複製' : '複製代碼'}
+              </button>
+            </div>
+
+            <p className="text-3xs text-stone-400 mt-3">請學生使用手機掃描此 QR Code 即可直接進入點名</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── 後台專用：檢視名冊 Modal ── */}
+      {activeAttendeesSession && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-lg w-full border border-stone-200 max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex justify-between items-center pb-4 border-b border-stone-100">
+              <div>
+                <h3 className="font-black text-stone-800 text-base">{activeAttendeesSession.name}</h3>
+                <p className="text-xs text-stone-500 mt-0.5">
+                  日期：{activeAttendeesSession.date} · 簽到人數：{activeAttendeesSession.attendees.length} 人
+                </p>
+              </div>
+              <button
+                onClick={() => setActiveAttendeesSession(null)}
+                className="text-stone-400 hover:text-stone-600 p-1.5 rounded-full hover:bg-stone-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto py-4 space-y-2">
+              {activeAttendeesSession.attendees.length === 0 ? (
+                <p className="text-center py-8 text-xs text-stone-400">目前尚無人簽到</p>
+              ) : (
+                activeAttendeesSession.attendees.map((a, idx) => (
+                  <div key={a.id} className="flex items-center gap-3 bg-stone-50 p-3 rounded-xl border border-stone-100">
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                      {idx + 1}
+                    </span>
+                    <div className="flex-1 min-w-0 text-xs">
+                      <p className="font-bold text-stone-800">{a.nickname} ({a.realName})</p>
+                      <p className="text-stone-400 font-mono">學號: {a.studentId} · 簽到: {a.checkedAt}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 加練預約資料填寫 Modal ── */}
+      {view === 'user' && showModal && bookingSlot && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-stone-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-6 border-b border-stone-100 flex justify-between items-center">
+              <h3 className="text-base font-black text-stone-800">填寫加練預約資料</h3>
+              <button
+                onClick={() => setShowModal(false)}
+                className="text-stone-400 hover:text-stone-600 p-1.5 rounded-full hover:bg-stone-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleBookingSubmit} className="p-6 space-y-4">
+              <div className="bg-amber-50 text-amber-900 border border-amber-100 p-3.5 rounded-2xl text-xs flex items-start gap-2.5">
+                <Dumbbell className="w-5 h-5 shrink-0 text-amber-700 mt-0.5" />
+                <div>
+                  <p className="font-bold">預約加練時段：</p>
+                  <p className="font-semibold text-stone-800 mt-0.5">
+                    {bookingSlot.date} · {bookingSlot.time}
+                  </p>
+                </div>
+              </div>
 
               <div className="space-y-1">
-                <label className="block text-xs font-bold text-stone-700">
-                  綽號 / 稱呼 <span className="text-rose-500">*</span>
+                <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">
+                  學號 (選填)
                 </label>
+                <input
+                  type="text"
+                  value={formData.studentId}
+                  onChange={(e) => setFormData({ ...formData, studentId: e.target.value })}
+                  className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-100 outline-none text-xs font-mono transition-all"
+                  placeholder="請輸入學號"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">綽號 *</label>
                 <input
                   type="text"
                   required
                   value={formData.nickname}
                   onChange={(e) => setFormData({ ...formData, nickname: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 outline-none text-sm"
-                  placeholder="顯示在公開時段上的稱呼"
+                  className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-100 outline-none text-xs transition-all"
+                  placeholder="請輸入綽號"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="block text-xs font-bold text-stone-700">
-                  真實本名 <span className="text-rose-500">*</span>
-                </label>
+                <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">真實姓名 *</label>
                 <input
                   type="text"
                   required
                   value={formData.realName}
                   onChange={(e) => setFormData({ ...formData, realName: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-stone-200 focus:border-sienna-500 outline-none text-sm"
-                  placeholder="僅管理員與教練可見，時數統計用"
+                  className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-100 outline-none text-xs transition-all"
+                  placeholder="請輸入真實姓名"
                 />
               </div>
 
-              {!morningTraining && (
-                <div className="space-y-1">
-                  <label className="block text-xs font-bold text-stone-700">
-                    具體加練時間 <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.specificTime}
-                    onChange={(e) => {
-                      setFormData({ ...formData, specificTime: e.target.value });
-                      setTimeError('');
-                    }}
-                    className={`w-full px-3.5 py-2.5 rounded-xl border outline-none text-sm ${
-                      timeError ? 'border-rose-400 bg-rose-50/50' : 'border-stone-200 focus:border-sienna-500'
-                    }`}
-                    placeholder="例如：14:00~16:00 (需滿2小時)"
-                  />
-                  {timeError && <p className="text-xs text-rose-500 mt-1">{timeError}</p>}
-                </div>
-              )}
-
-              <div className="pt-3 flex gap-2.5">
+              <div className="pt-3 flex gap-3">
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowModal(false);
-                    setMorningTraining(false);
-                  }}
-                  className="flex-1 py-2.5 rounded-xl border border-stone-200 text-stone-600 font-bold text-sm hover:bg-stone-50"
+                  onClick={() => setShowModal(false)}
+                  className="flex-1 px-4 py-3 rounded-xl border border-stone-200 text-stone-600 font-bold hover:bg-stone-50 text-xs transition-colors"
                 >
                   取消
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
-                  className="flex-1 py-2.5 rounded-xl bg-sienna-600 text-white font-bold text-sm hover:bg-sienna-700 transition-colors shadow-sm disabled:opacity-60"
+                  className="flex-1 px-4 py-3 rounded-xl bg-amber-600 text-white font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs transition-colors"
                 >
-                  {submitting ? '送出預約中…' : morningTraining ? '確認晨練報名 🏇' : '確認預約上馬 🏇'}
+                  確認預約
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* 加練現場點名密碼 Modal */}
-      {checkinBookingId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl shadow-xl w-full max-w-sm overflow-hidden p-6 space-y-4">
-            <div className="flex justify-between items-center border-b border-stone-100 pb-3">
-              <h3 className="font-bold text-stone-900 text-base flex items-center gap-1.5">
-                <ClipboardCheck className="w-5 h-5 text-emerald-600" />
-                現場加練點名簽到
-              </h3>
-              <button
-                onClick={() => {
-                  setCheckinBookingId(null);
-                  setCheckinPassword('');
-                  setCheckinError('');
-                }}
-                className="p-1 rounded-full text-stone-400 hover:bg-stone-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleCheckin} className="space-y-4">
-              <p className="text-xs text-stone-500">請向現場教練或幹部索取今日 5 位數點名密碼</p>
-              <div>
-                <input
-                  type="text"
-                  required
-                  autoFocus
-                  value={checkinPassword}
-                  onChange={(e) => {
-                    setCheckinPassword(e.target.value);
-                    setCheckinError('');
-                  }}
-                  className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-emerald-500 outline-none text-center font-mono tracking-widest text-xl font-bold"
-                  placeholder="5 位密碼"
-                />
-                {checkinError && <p className="text-xs text-rose-500 mt-1">{checkinError}</p>}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCheckinBookingId(null)}
-                  className="flex-1 py-2.5 rounded-xl border border-stone-200 text-stone-600 font-bold text-xs"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={checkinLoading || !checkinPassword}
-                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-700 disabled:opacity-60"
-                >
-                  {checkinLoading ? '驗證中…' : '確認點名'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 學期結算一鍵清空安全確認 Modal */}
-      {showClearAllModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden p-6 space-y-4 border border-rose-200">
-            <div className="flex justify-between items-center border-b border-stone-100 pb-3">
-              <div className="flex items-center gap-2 text-rose-600">
-                <AlertCircle className="w-6 h-6" />
-                <h3 className="font-black text-lg text-stone-900">學期結算與全體清空確認</h3>
-              </div>
-              <button
-                onClick={() => {
-                  setShowClearAllModal(false);
-                  setClearAllConfirmText('');
-                }}
-                className="p-1 rounded-full text-stone-400 hover:bg-stone-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs text-stone-600">
-              <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-1.5 text-rose-900">
-                <p className="font-bold text-sm">⚠️ 此操作無法復原，將會完全清除：</p>
-                <p>1. 全體社員學號綁定名冊 (Members 表)</p>
-                <p>2. 本學期所有加練預約與出席時數紀錄 (Bookings 表)</p>
-                <p>3. 所有社課簽到出席名冊 (Class Attendance 表)</p>
-              </div>
-              <p className="font-semibold text-stone-700">
-                為了避免誤觸，請在下方輸入 <span className="text-rose-600 font-mono font-bold bg-stone-100 px-1.5 py-0.5 rounded">確認清空</span> 以解除防護鎖定：
-              </p>
-              <input
-                type="text"
-                autoFocus
-                value={clearAllConfirmText}
-                onChange={(e) => setClearAllConfirmText(e.target.value)}
-                placeholder="請輸入「確認清空」"
-                className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 focus:border-rose-500 focus:ring-2 focus:ring-rose-200 outline-none text-sm font-bold text-center"
-              />
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowClearAllModal(false);
-                  setClearAllConfirmText('');
-                }}
-                className="flex-1 py-2.5 rounded-xl border border-stone-200 text-stone-600 font-bold text-xs hover:bg-stone-50"
-              >
-                取消返回
-              </button>
-              <button
-                type="button"
-                disabled={clearingAll || clearAllConfirmText.trim() !== '確認清空'}
-                onClick={handleClearAllSemesterData}
-                className="flex-1 py-2.5 rounded-xl bg-rose-600 text-white font-bold text-xs hover:bg-rose-700 disabled:opacity-40 transition-colors shadow-xs"
-              >
-                {clearingAll ? '清空中…' : '確認執行學期重置'}
-              </button>
-            </div>
           </div>
         </div>
       )}
