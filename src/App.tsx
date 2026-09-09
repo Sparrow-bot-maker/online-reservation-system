@@ -2044,7 +2044,7 @@ export default function App() {
 
         {/* 模式 1: 學號快速查詢 */}
         {memberQueryMode === 'query' ? (
-          <form onSubmit={handleMemberPinSubmit} className="space-y-3">
+          <form onSubmit={handleMemberPinSubmit}>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -2060,16 +2060,6 @@ export default function App() {
                 className="px-5 py-2.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs disabled:opacity-50 shrink-0 flex items-center gap-1.5"
               >
                 {memberLoading ? '查詢中…' : '查詢紀錄'}
-              </button>
-            </div>
-            <div className="flex justify-between items-center px-1">
-              <span className="text-3xs text-stone-400">輸入學號按 Enter 即可快速查詢</span>
-              <button
-                type="button"
-                onClick={() => setMemberQueryMode('register')}
-                className="text-3xs text-amber-700 hover:underline font-bold"
-              >
-                首次使用？點此登記姓名與學號
               </button>
             </div>
           </form>
@@ -2108,16 +2098,6 @@ export default function App() {
             >
               {registerLoading ? '登記中…' : '完成登記並查詢紀錄'}
             </button>
-
-            <div className="text-center">
-              <button
-                type="button"
-                onClick={() => setMemberQueryMode('query')}
-                className="text-3xs text-stone-500 hover:text-stone-800 font-bold"
-              >
-                已經登記過？切換至「學號快速查詢」
-              </button>
-            </div>
           </form>
         )}
       </div>
