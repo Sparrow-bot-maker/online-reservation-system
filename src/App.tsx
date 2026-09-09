@@ -24,7 +24,8 @@ import {
   Copy,
   Check,
   KeyRound,
-  History,
+  ArrowRight,
+  LogOut,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -35,7 +36,7 @@ type Booking = {
   time: string; // "HH:MM - HH:MM"
   nickname: string;
   realName: string;
-  studentId?: string;
+  studentId: string;
   createdAt?: string;
 };
 
@@ -258,15 +259,19 @@ export default function App() {
 
   // 學生端 Tab（順序：加練預約 → 社課點名 → 出席紀錄）
   const [userTab, setUserTab] = useState<'加練' | '社課點名' | '出席紀錄'>('加練');
-  const [attendanceQuery, setAttendanceQuery] = useState('');
 
-  // 我的紀錄查詢
-  const [memberQuery, setMemberQuery] = useState('');
+  // 出席紀錄 Tab 查詢（需按下查詢）
+  const [attendanceInput, setAttendanceInput] = useState('');
+  const [queriedAttendancePin, setQueriedAttendancePin] = useState<string | null>(null);
+
+  // 我的紀錄 (專屬學號登入/查詢狀態)
+  const [memberPinInput, setMemberPinInput] = useState('');
+  const [loggedInMemberPin, setLoggedInMemberPin] = useState<string | null>(null);
 
   // 預約 Modal
   const [showModal, setShowModal] = useState(false);
   const [bookingSlot, setBookingSlot] = useState<{ date: string; time: string } | null>(null);
-  const [formData, setFormData] = useState({ nickname: '', realName: '', studentId: '' });
+  const [formData, setFormData] = useState({ studentId: '', nickname: '', realName: '' });
 
   // 頁面 View
   const [view, setView] = useState<'user' | 'admin' | 'member' | 'class-checkin'>('user');
@@ -309,6 +314,12 @@ export default function App() {
       setClassSessions([initialSession]);
     }
 
+    const savedMemberPin = localStorage.getItem('equestrian_saved_member_pin');
+    if (savedMemberPin) {
+      setLoggedInMemberPin(savedMemberPin);
+      setMemberPinInput(savedMemberPin);
+    }
+
     const urlParams = new URLSearchParams(window.location.search);
     const sessionParam = urlParams.get('session');
     if (sessionParam) {
@@ -328,6 +339,12 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('equestrian_class_sessions', JSON.stringify(classSessions));
   }, [classSessions]);
+
+  useEffect(() => {
+    if (loggedInMemberPin) {
+      localStorage.setItem('equestrian_saved_member_pin', loggedInMemberPin);
+    }
+  }, [loggedInMemberPin]);
 
   // 產生 QR Code 圖片
   useEffect(() => {
@@ -455,21 +472,21 @@ export default function App() {
 
   const handleBookingSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bookingSlot || !formData.nickname.trim() || !formData.realName.trim()) return;
+    if (!bookingSlot || !formData.studentId.trim() || !formData.nickname.trim() || !formData.realName.trim()) return;
 
     const newBooking: Booking = {
       id: Math.random().toString(36).substring(2, 9),
       date: bookingSlot.date,
       time: bookingSlot.time,
+      studentId: formData.studentId.trim(),
       nickname: formData.nickname.trim(),
       realName: formData.realName.trim(),
-      studentId: formData.studentId.trim(),
       createdAt: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }),
     };
 
     setBookings((prev) => [newBooking, ...prev]);
     setMyBookingIds((prev) => [newBooking.id, ...prev]);
-    setFormData({ nickname: '', realName: '', studentId: '' });
+    setFormData({ studentId: '', nickname: '', realName: '' });
     setShowModal(false);
     setBookingSlot(null);
   };
@@ -490,167 +507,205 @@ export default function App() {
 
   // 統計出席資料
   const myBookingsList = bookings.filter((b) => myBookingIds.includes(b.id));
-  const queryStr = attendanceQuery.trim().toLowerCase();
 
   // 收集所有社課的出席紀錄
   const allAttendanceList = classSessions.flatMap((s) =>
     s.attendees.map((a) => ({ ...a, sessionName: s.name, sessionDate: s.date, sessionId: s.id }))
   );
 
-  const matchedAttendance = queryStr
+  // 出席紀錄查詢（按鈕送出後才過濾）
+  const matchedAttendance = queriedAttendancePin
     ? allAttendanceList.filter(
-        (a) =>
-          a.nickname.toLowerCase().includes(queryStr) ||
-          a.realName.toLowerCase().includes(queryStr) ||
-          a.studentId.toLowerCase().includes(queryStr)
+        (a) => a.studentId.toLowerCase() === queriedAttendancePin.toLowerCase()
       )
     : [];
 
   const riderBadge = getRiderTitle(matchedAttendance.length);
 
-  // 個人紀錄過濾
-  const memberSearchStr = memberQuery.trim().toLowerCase();
-  const userBookings = memberSearchStr
-    ? bookings.filter(
-        (b) =>
-          b.nickname.toLowerCase().includes(memberSearchStr) ||
-          b.realName.toLowerCase().includes(memberSearchStr) ||
-          (b.studentId && b.studentId.toLowerCase().includes(memberSearchStr))
-      )
+  // ── 我的紀錄查詢/登入 ──
+  const handleMemberLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!memberPinInput.trim()) return;
+    setLoggedInMemberPin(memberPinInput.trim());
+  };
+
+  const currentMemberPin = loggedInMemberPin?.toLowerCase() || '';
+
+  const userBookings = currentMemberPin
+    ? bookings.filter((b) => b.studentId.toLowerCase() === currentMemberPin)
     : [];
 
-  const userClasses = memberSearchStr
-    ? allAttendanceList.filter(
-        (a) =>
-          a.nickname.toLowerCase().includes(memberSearchStr) ||
-          a.realName.toLowerCase().includes(memberSearchStr) ||
-          a.studentId.toLowerCase().includes(memberSearchStr)
-      )
+  const userClasses = currentMemberPin
+    ? allAttendanceList.filter((a) => a.studentId.toLowerCase() === currentMemberPin)
     : [];
 
   const totalPracticeHours = userBookings.reduce((sum, b) => sum + calculateHoursFromRange(b.time), 0);
   const memberRiderBadge = getRiderTitle(userClasses.length);
+  const sampleName = userBookings[0]?.realName || userClasses[0]?.realName || '';
 
   // ─────────────────── 個人紀錄視圖 (我的紀錄) ─────────────────────────────
-  const renderMemberView = () => (
-    <div className="w-full max-w-full space-y-6 animate-in fade-in duration-200">
-      <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
-            <KeyRound className="w-5 h-5" />
+  const renderMemberView = () => {
+    // 尚未登入/輸入學號：顯示單一登入/查詢卡片
+    if (!loggedInMemberPin) {
+      return (
+        <div className="w-full max-w-md mx-auto mt-4 sm:mt-6 bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-200 box-border animate-in fade-in duration-200">
+          <div className="flex flex-col items-center mb-6 text-center">
+            <div className="w-14 h-14 bg-amber-100 text-amber-800 rounded-2xl flex items-center justify-center mb-3 shadow-inner">
+              <KeyRound className="w-7 h-7" />
+            </div>
+            <h2 className="text-xl font-black text-stone-800">查詢個人訓練與出席紀錄</h2>
+            <p className="text-xs text-stone-500 mt-1">請輸入個人學號查詢您的加練時數與社課出席狀況</p>
           </div>
-          <div>
-            <h2 className="text-lg font-black text-stone-800">個人訓練與出席紀錄</h2>
-            <p className="text-xs text-stone-400">輸入學號、綽號或姓名，一鍵查詢加練時數、次數與社課參加紀錄</p>
+
+          <form onSubmit={handleMemberLoginSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5">
+                個人學號 (PIN) *
+              </label>
+              <div className="relative">
+                <User className="w-5 h-5 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  required
+                  value={memberPinInput}
+                  onChange={(e) => setMemberPinInput(e.target.value)}
+                  className="w-full pl-11 pr-4 py-3 rounded-2xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-100 outline-none text-sm transition-all font-mono placeholder-stone-400"
+                  placeholder="例如：S112001"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-3.5 bg-amber-800 hover:bg-amber-900 text-white rounded-2xl font-bold text-sm transition-all shadow-sm flex items-center justify-center gap-2"
+            >
+              <span>查看我的紀錄</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </form>
+        </div>
+      );
+    }
+
+    // 已輸入學號：跳轉至個人紀錄儀表板
+    return (
+      <div className="w-full max-w-full space-y-6 animate-in fade-in duration-300">
+        {/* 個人身分卡片與登出切換按鈕 */}
+        <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 box-border">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-lg shrink-0">
+              <User className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-black text-stone-800">{sampleName ? `${sampleName}` : '社員紀錄'}</h3>
+                <span className="text-xs bg-amber-100 text-amber-900 font-mono font-bold px-2 py-0.5 rounded-md">
+                  {loggedInMemberPin}
+                </span>
+              </div>
+              <p className="text-xs text-stone-400 mt-0.5">加練時數統計 · 社課出席歷程</p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              setLoggedInMemberPin(null);
+              setMemberPinInput('');
+              localStorage.removeItem('equestrian_saved_member_pin');
+            }}
+            className="px-3.5 py-2 text-xs font-bold text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-xl transition-colors flex items-center gap-1.5 shrink-0"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>切換學號 / 重新查詢</span>
+          </button>
+        </div>
+
+        {/* 個人三大指標卡片 */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-xs flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+              <Clock className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-3xs font-bold text-stone-400 uppercase tracking-wider">加練累積總時數</p>
+              <p className="text-2xl font-black text-stone-800">{totalPracticeHours} <span className="text-xs font-normal text-stone-500">小時</span></p>
+            </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-xs flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center shrink-0">
+              <Dumbbell className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-3xs font-bold text-stone-400 uppercase tracking-wider">加練預約總次數</p>
+              <p className="text-2xl font-black text-stone-800">{userBookings.length} <span className="text-xs font-normal text-stone-500">次</span></p>
+            </div>
+          </div>
+
+          <div className={`p-5 rounded-2xl border ${memberRiderBadge.border} ${memberRiderBadge.bg} shadow-xs flex items-center gap-3`}>
+            <div className="w-12 h-12 rounded-xl bg-white text-amber-500 shadow-xs flex items-center justify-center shrink-0">
+              <Sparkles className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-3xs font-bold text-stone-400 uppercase tracking-wider">社課出席 · 騎士成就</p>
+              <p className={`text-base font-black ${memberRiderBadge.color}`}>{memberRiderBadge.title} ({userClasses.length} 堂)</p>
+            </div>
           </div>
         </div>
 
-        <div className="relative mt-4">
-          <Search className="w-5 h-5 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={memberQuery}
-            onChange={(e) => setMemberQuery(e.target.value)}
-            className="w-full pl-11 pr-4 py-3 rounded-2xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-100 outline-none text-sm transition-all placeholder-stone-400"
-            placeholder="請輸入學號、真實姓名或綽號搜尋..."
-          />
+        {/* 歷程詳情 */}
+        <div className="grid md:grid-cols-2 gap-6">
+          {/* 加練歷程 */}
+          <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4 box-border">
+            <h3 className="text-base font-black text-stone-800 flex items-center gap-2 border-b border-stone-100 pb-3">
+              <Dumbbell className="w-4 h-4 text-amber-700" />
+              加練預約明細 ({userBookings.length})
+            </h3>
+            {userBookings.length === 0 ? (
+              <p className="text-xs text-stone-400 py-6 text-center">目前無任何加練預約紀錄</p>
+            ) : (
+              <div className="space-y-2.5">
+                {userBookings.map((b) => (
+                  <div key={b.id} className="p-3.5 bg-amber-50/60 rounded-xl border border-amber-100/80 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="font-bold text-stone-800">{b.date}</span>
+                      <span className="font-mono font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded">
+                        {calculateHoursFromRange(b.time)} hrs
+                      </span>
+                    </div>
+                    <p className="text-stone-600 mt-1">{b.time} · {b.nickname} ({b.realName})</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 社課出席歷程 */}
+          <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4 box-border">
+            <h3 className="text-base font-black text-stone-800 flex items-center gap-2 border-b border-stone-100 pb-3">
+              <GraduationCap className="w-4 h-4 text-emerald-700" />
+              社課參加歷程 ({userClasses.length})
+            </h3>
+            {userClasses.length === 0 ? (
+              <p className="text-xs text-stone-400 py-6 text-center">目前無任何社課簽到紀錄</p>
+            ) : (
+              <div className="space-y-2.5">
+                {userClasses.map((c, i) => (
+                  <div key={i} className="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-100/80 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="font-bold text-stone-800">{c.sessionName}</span>
+                      <span className="text-emerald-700 font-bold">{c.sessionDate}</span>
+                    </div>
+                    <p className="text-stone-500 mt-1">簽到時間：{c.checkedAt} · 學號：{c.studentId}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
-
-      {memberSearchStr === '' ? (
-        <div className="bg-white p-12 rounded-3xl border border-dashed border-stone-200 text-center text-stone-400">
-          <Search className="w-10 h-10 mx-auto mb-2 opacity-30 text-stone-400" />
-          <p className="text-sm font-bold text-stone-500">請在上方搜尋欄輸入姓名或學號以檢索個人紀錄</p>
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {/* 個人榮譽與統計三大指標 */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-xs flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
-                <Clock className="w-6 h-6" />
-              </div>
-              <div>
-                <p className="text-3xs font-bold text-stone-400 uppercase tracking-wider">加練累積總時數</p>
-                <p className="text-2xl font-black text-stone-800">{totalPracticeHours} <span className="text-xs font-normal text-stone-500">小時</span></p>
-              </div>
-            </div>
-
-            <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-xs flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center shrink-0">
-                <Dumbbell className="w-6 h-6" />
-              </div>
-              <div>
-                <p className="text-3xs font-bold text-stone-400 uppercase tracking-wider">加練預約總次數</p>
-                <p className="text-2xl font-black text-stone-800">{userBookings.length} <span className="text-xs font-normal text-stone-500">次</span></p>
-              </div>
-            </div>
-
-            <div className={`p-5 rounded-2xl border ${memberRiderBadge.border} ${memberRiderBadge.bg} shadow-xs flex items-center gap-3`}>
-              <div className="w-12 h-12 rounded-xl bg-white text-amber-500 shadow-xs flex items-center justify-center shrink-0">
-                <Sparkles className="w-6 h-6" />
-              </div>
-              <div>
-                <p className="text-3xs font-bold text-stone-400 uppercase tracking-wider">社課出席 · 騎士成就</p>
-                <p className={`text-base font-black ${memberRiderBadge.color}`}>{memberRiderBadge.title} ({userClasses.length} 堂)</p>
-              </div>
-            </div>
-          </div>
-
-          {/* 歷程詳情 */}
-          <div className="grid md:grid-cols-2 gap-6">
-            {/* 加練歷程 */}
-            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
-              <h3 className="text-base font-black text-stone-800 flex items-center gap-2 border-b border-stone-100 pb-3">
-                <Dumbbell className="w-4 h-4 text-amber-700" />
-                加練預約明細 ({userBookings.length})
-              </h3>
-              {userBookings.length === 0 ? (
-                <p className="text-xs text-stone-400 py-6 text-center">無加練預約紀錄</p>
-              ) : (
-                <div className="space-y-2.5">
-                  {userBookings.map((b) => (
-                    <div key={b.id} className="p-3.5 bg-amber-50/60 rounded-xl border border-amber-100/80 text-xs">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-stone-800">{b.date}</span>
-                        <span className="font-mono font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded">
-                          {calculateHoursFromRange(b.time)} hrs
-                        </span>
-                      </div>
-                      <p className="text-stone-600 mt-1">{b.time} · {b.nickname} ({b.realName})</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* 社課出席歷程 */}
-            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
-              <h3 className="text-base font-black text-stone-800 flex items-center gap-2 border-b border-stone-100 pb-3">
-                <GraduationCap className="w-4 h-4 text-emerald-700" />
-                社課參加歷程 ({userClasses.length})
-              </h3>
-              {userClasses.length === 0 ? (
-                <p className="text-xs text-stone-400 py-6 text-center">無社課簽到紀錄</p>
-              ) : (
-                <div className="space-y-2.5">
-                  {userClasses.map((c, i) => (
-                    <div key={i} className="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-100/80 text-xs">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-stone-800">{c.sessionName}</span>
-                        <span className="text-emerald-700 font-bold">{c.sessionDate}</span>
-                      </div>
-                      <p className="text-stone-500 mt-1">簽到時間：{c.checkedAt} · 學號：{c.studentId}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+    );
+  };
 
   // ─────────────────── 學生現場點名簽到頁面 ─────────────────────────────────
   if (view === 'class-checkin') {
@@ -1331,7 +1386,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ── 3. 出席紀錄 ── */}
+        {/* ── 3. 出席紀錄 (輸入學號 + 按下查詢後才跳轉顯示) ── */}
         {userTab === '出席紀錄' && (
           <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 w-full box-border">
             <div className="flex items-center gap-2 mb-1">
@@ -1339,30 +1394,45 @@ export default function App() {
               <h2 className="text-base font-black text-stone-800">查詢社課出席紀錄</h2>
             </div>
             <p className="text-xs text-stone-400 mb-5">
-              輸入學號、綽號或真實姓名，即時檢視歷史出席紀錄與成就徽章！
+              請輸入個人學號 (PIN)，點擊查詢以檢視社課出席歷程與騎士稱號！
             </p>
 
-            <div className="relative mb-6">
-              <Search className="w-5 h-5 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={attendanceQuery}
-                onChange={(e) => setAttendanceQuery(e.target.value)}
-                className="w-full pl-11 pr-4 py-3 rounded-2xl border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 outline-none text-sm transition-all"
-                placeholder="輸入學號、綽號或真實姓名搜尋..."
-              />
-            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                setQueriedAttendancePin(attendanceInput.trim());
+              }}
+              className="flex gap-2 mb-6"
+            >
+              <div className="relative flex-1">
+                <User className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  required
+                  value={attendanceInput}
+                  onChange={(e) => setAttendanceInput(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 outline-none text-xs sm:text-sm font-mono transition-all"
+                  placeholder="請輸入學號 (例如：S112001)"
+                />
+              </div>
+              <button
+                type="submit"
+                className="px-5 py-2.5 bg-emerald-600 text-white font-bold text-xs sm:text-sm rounded-xl hover:bg-emerald-700 transition-colors shrink-0 shadow-xs"
+              >
+                查詢
+              </button>
+            </form>
 
-            {attendanceQuery.trim() === '' ? (
+            {!queriedAttendancePin ? (
               <div className="text-center py-10 text-stone-400 bg-stone-50 rounded-2xl border border-dashed border-stone-200">
                 <Search className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                <p className="text-xs font-semibold">在上方輸入姓名或學號以檢索出席紀錄</p>
+                <p className="text-xs font-semibold">輸入學號後點擊「查詢」顯示出席紀錄</p>
               </div>
             ) : matchedAttendance.length === 0 ? (
               <div className="text-center py-10 text-stone-400 bg-stone-50 rounded-2xl border border-dashed border-stone-200">
                 <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-40 text-stone-400" />
-                <p className="text-xs font-semibold">找不到「{attendanceQuery}」的出席紀錄</p>
-                <p className="text-3xs text-stone-400 mt-1">請確認輸入之學號或姓名是否與簽到一致</p>
+                <p className="text-xs font-semibold">找不到學號「{queriedAttendancePin}」的出席紀錄</p>
+                <p className="text-3xs text-stone-400 mt-1">請確認學號是否正確或現場簽到時是否有填寫</p>
               </div>
             ) : (
               <div className="space-y-4 animate-in fade-in">
@@ -1453,7 +1523,7 @@ export default function App() {
   // ─────────────────── 全域渲染 ─────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-stone-100/70 text-stone-900 font-sans p-3 sm:p-6 md:p-8 w-full max-w-full overflow-x-hidden box-border">
-      {/* 頂部導覽列（流式響應式，保證不超出螢幕） */}
+      {/* 頂部導覽列 */}
       <div className="max-w-4xl mx-auto flex justify-end items-center gap-2 mb-4 w-full box-border">
         <button
           onClick={() => setView(view === 'member' ? 'user' : 'member')}
@@ -1501,7 +1571,7 @@ export default function App() {
               : view === 'admin'
               ? '統整管理加練名冊、社課 QR Code 場次與點名密碼'
               : view === 'member'
-              ? '查看個人加練累積總時數、次數與社課出席紀錄'
+              ? '輸入學號查詢個人加練累積總時數、次數與社課出席紀錄'
               : '請確認場次資訊並輸入學號完成簽到'}
           </p>
         </header>
@@ -1620,14 +1690,15 @@ export default function App() {
 
               <div className="space-y-1">
                 <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">
-                  學號 (選填)
+                  個人學號 (PIN) *
                 </label>
                 <input
                   type="text"
+                  required
                   value={formData.studentId}
                   onChange={(e) => setFormData({ ...formData, studentId: e.target.value })}
                   className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-100 outline-none text-xs font-mono transition-all"
-                  placeholder="請輸入學號"
+                  placeholder="請輸入學號 (例如：S112001)"
                 />
               </div>
 
