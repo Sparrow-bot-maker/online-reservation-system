@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import QRCodeLib from 'qrcode';
 import {
   Calendar,
@@ -30,6 +30,7 @@ import {
   ClipboardCheck,
   ArrowLeft,
   ExternalLink,
+  History,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -380,6 +381,7 @@ export default function App() {
   const [isAdminAuth, setIsAdminAuth] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
   const [adminTab, setAdminTab] = useState<'overview' | 'members' | 'classes' | 'settings'>('overview');
+  const [adminOverviewScope, setAdminOverviewScope] = useState<'upcoming' | 'all'>('upcoming');
   const [adminBookings, setAdminBookings] = useState<AdminBooking[]>([]);
   const [memberPins, setMemberPins] = useState<MemberPin[]>([]);
   const [newPinName, setNewPinName] = useState('');
@@ -403,7 +405,6 @@ export default function App() {
   const [memberClassRecords, setMemberClassRecords] = useState<MemberClassRecord[]>([]);
   const [memberRealName, setMemberRealName] = useState('');
   const [memberLoading, setMemberLoading] = useState(false);
-  const [memberLoginError, setMemberLoginError] = useState('');
 
   // 社課新增與彈窗 State
   const [newClassName, setNewClassName] = useState('');
@@ -887,7 +888,6 @@ export default function App() {
     const pin = pinToQuery.trim();
     if (!pin) return;
     setMemberLoading(true);
-    setMemberLoginError('');
 
     try {
       // 嘗試從後端 API 取得
@@ -979,8 +979,25 @@ export default function App() {
 
   // ─── 統計指標與名冊計算 ───────────────────────────────────────────────────
 
+  const todayStr = getTodayTW();
+
+  // 彙整後台所有加練預約（排序與篩選今後預約）
+  const { upcomingBookings, pastBookings } = useMemo(() => {
+    const allBookingsSource = adminBookings.length > 0 ? adminBookings : bookings;
+    const sorted = [...allBookingsSource].sort((a, b) => {
+      const cmp = a.date.localeCompare(b.date);
+      if (cmp !== 0) return cmp;
+      return a.time.localeCompare(b.time);
+    });
+
+    const upcoming = sorted.filter((b) => b.date >= todayStr);
+    const past = sorted.filter((b) => b.date < todayStr).reverse(); // 歷史由新到舊
+
+    return { upcomingBookings: upcoming, pastBookings: past };
+  }, [adminBookings, bookings, todayStr]);
+
   // 計算社員出席總名冊 (彙整全部預約、名冊與社課出席)
-  const memberDirectory = React.useMemo(() => {
+  const memberDirectory = useMemo(() => {
     const map = new Map<string, {
       realName: string;
       studentId: string;
@@ -1298,61 +1315,113 @@ export default function App() {
           </div>
         </div>
 
-        {/* ── 1. Tab: 加練預約總覽 ── */}
+        {/* ── 1. Tab: 加練預約總覽 (只顯示今後預約，可切換歷史紀錄) ── */}
         {adminTab === 'overview' && (
           <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4 box-border">
-            <div className="flex justify-between items-center pb-2 border-b border-stone-100">
-              <h3 className="text-base font-black text-stone-800 flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-amber-600" />
-                全體加練預約總覽
-              </h3>
-              <span className="text-xs text-stone-400">
-                共 {bookings.length + adminBookings.length} 筆預約
-              </span>
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 pb-3 border-b border-stone-100">
+              <div>
+                <h3 className="text-base font-black text-stone-800 flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-amber-600" />
+                  {adminOverviewScope === 'upcoming' ? '今後加練預約總覽' : '全體加練歷史紀錄'}
+                </h3>
+                <p className="text-3xs text-stone-400 mt-0.5">
+                  {adminOverviewScope === 'upcoming'
+                    ? `僅顯示今日 (${todayStr}) 與未來之預約`
+                    : '包含過去所有已完成或過期之加練紀錄'}
+                </p>
+              </div>
+
+              {/* 切換範圍按鈕 */}
+              <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200/60 text-xs font-bold self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setAdminOverviewScope('upcoming')}
+                  className={`px-3 py-1.5 rounded-lg transition-all ${
+                    adminOverviewScope === 'upcoming'
+                      ? 'bg-white text-amber-800 shadow-xs'
+                      : 'text-stone-500 hover:text-stone-800'
+                  }`}
+                >
+                  今後預約 ({upcomingBookings.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdminOverviewScope('all')}
+                  className={`px-3 py-1.5 rounded-lg transition-all ${
+                    adminOverviewScope === 'all'
+                      ? 'bg-white text-amber-800 shadow-xs'
+                      : 'text-stone-500 hover:text-stone-800'
+                  }`}
+                >
+                  歷史紀錄 ({pastBookings.length})
+                </button>
+              </div>
             </div>
 
-            {bookings.length === 0 && adminBookings.length === 0 ? (
-              <p className="text-xs text-stone-400 py-8 text-center">目前尚無加練預約資料</p>
-            ) : (
-              <div className="overflow-x-auto w-full">
-                <table className="w-full text-left text-xs text-stone-700">
-                  <thead className="bg-stone-50 text-stone-500 font-bold border-b border-stone-100">
-                    <tr>
-                      <th className="py-2.5 px-3">日期</th>
-                      <th className="py-2.5 px-3">時段</th>
-                      <th className="py-2.5 px-3">學號 (PIN)</th>
-                      <th className="py-2.5 px-3">綽號</th>
-                      <th className="py-2.5 px-3">本名</th>
-                      <th className="py-2.5 px-3">時數</th>
-                      <th className="py-2.5 px-3">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-100">
-                    {(adminBookings.length > 0 ? adminBookings : bookings).map((b) => (
-                      <tr key={b.id} className="hover:bg-stone-50/80">
-                        <td className="py-2.5 px-3 font-semibold">{b.date}</td>
-                        <td className="py-2.5 px-3">{b.specificTime || b.time}</td>
-                        <td className="py-2.5 px-3 font-mono text-amber-800 font-bold">{b.studentId || '—'}</td>
-                        <td className="py-2.5 px-3 font-bold">{b.nickname}</td>
-                        <td className="py-2.5 px-3">{b.realName || '—'}</td>
-                        <td className="py-2.5 px-3 font-bold text-amber-700">
-                          {calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time)} hr
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <button
-                            onClick={() => handleCancelBooking(b.id)}
-                            className="text-rose-500 hover:text-rose-700 p-1"
-                            title="刪除預約"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
+            {(() => {
+              const displayList = adminOverviewScope === 'upcoming' ? upcomingBookings : pastBookings;
+
+              if (displayList.length === 0) {
+                return (
+                  <p className="text-xs text-stone-400 py-10 text-center">
+                    {adminOverviewScope === 'upcoming'
+                      ? '目前尚無今日或今後的加練預約'
+                      : '目前尚無歷史預約紀錄'}
+                  </p>
+                );
+              }
+
+              return (
+                <div className="overflow-x-auto w-full">
+                  <table className="w-full text-left text-xs text-stone-700">
+                    <thead className="bg-stone-50 text-stone-500 font-bold border-b border-stone-100">
+                      <tr>
+                        <th className="py-2.5 px-3">日期</th>
+                        <th className="py-2.5 px-3">時段</th>
+                        <th className="py-2.5 px-3">學號 (PIN)</th>
+                        <th className="py-2.5 px-3">綽號</th>
+                        <th className="py-2.5 px-3">本名</th>
+                        <th className="py-2.5 px-3">時數</th>
+                        <th className="py-2.5 px-3">操作</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    </thead>
+                    <tbody className="divide-y divide-stone-100">
+                      {displayList.map((b) => {
+                        const isToday = b.date === todayStr;
+                        return (
+                          <tr key={b.id} className={`hover:bg-stone-50/80 ${isToday ? 'bg-amber-50/30' : ''}`}>
+                            <td className="py-2.5 px-3 font-semibold flex items-center gap-1.5">
+                              {b.date}
+                              {isToday && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-3xs font-bold">
+                                  今日
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3">{b.specificTime || b.time}</td>
+                            <td className="py-2.5 px-3 font-mono text-amber-800 font-bold">{b.studentId || '—'}</td>
+                            <td className="py-2.5 px-3 font-bold">{b.nickname}</td>
+                            <td className="py-2.5 px-3">{b.realName || '—'}</td>
+                            <td className="py-2.5 px-3 font-bold text-amber-700">
+                              {calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time)} hr
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <button
+                                onClick={() => handleCancelBooking(b.id)}
+                                className="text-rose-500 hover:text-rose-700 p-1"
+                                title="刪除預約"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -2300,60 +2369,62 @@ export default function App() {
   );
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // 主畫面 Layout
+  // 主畫面 Layout (全新精緻美觀頂部 Header 與導航)
   // ═══════════════════════════════════════════════════════════════════════════
 
   return (
     <div className="min-h-screen bg-stone-100/60 text-stone-900 font-sans p-3 sm:p-4 md:p-8 flex flex-col items-center w-full box-border overflow-x-hidden">
       {/* 頂部 Header */}
-      <header className="w-full max-w-4xl mx-auto flex justify-between items-center mb-6 pb-4 border-b border-stone-200/80">
+      <header className="w-full max-w-4xl mx-auto flex items-center justify-between mb-5 pb-3.5 border-b border-stone-200/80 gap-2">
+        {/* 左側 Logo 與系統標題 */}
         <div
           onClick={() => {
             setView('user');
             window.location.hash = '';
           }}
-          className="flex items-center gap-3 cursor-pointer select-none"
+          className="flex items-center gap-2.5 cursor-pointer select-none min-w-0"
         >
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-700 to-amber-900 text-white flex items-center justify-center font-bold text-lg shadow-md shadow-amber-900/20">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-gradient-to-tr from-amber-700 to-amber-900 text-white flex items-center justify-center font-bold text-base sm:text-lg shadow-md shadow-amber-900/20 shrink-0">
             🐎
           </div>
-          <div>
-            <h1 className="text-base sm:text-lg font-black text-stone-900 tracking-tight leading-tight">
-              馬術社預約與出席系統
+          <div className="min-w-0">
+            <h1 className="text-sm sm:text-base font-black text-stone-900 tracking-tight leading-tight truncate">
+              馬術社預約系統
             </h1>
-            <p className="text-3xs text-stone-400 font-medium">Equestrian Club System</p>
+            <p className="text-3xs text-stone-400 font-medium hidden sm:block">Equestrian Club System</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* 右側導航按鈕群 (精緻膠囊化排版，絕不折行) */}
+        <div className="flex items-center shrink-0">
           {view !== 'user' ? (
             <button
               onClick={() => {
                 setView('user');
                 window.location.hash = '';
               }}
-              className="text-xs font-bold px-3 py-2 rounded-xl bg-white border border-stone-200 text-stone-700 hover:bg-stone-50 flex items-center gap-1 shadow-xs"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 text-white hover:bg-amber-700 text-xs font-bold transition-all shadow-sm shadow-amber-200 whitespace-nowrap"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              返回首頁
+              <span>返回首頁</span>
             </button>
           ) : (
-            <>
+            <div className="inline-flex items-center bg-white/90 p-1 rounded-2xl border border-stone-200/90 shadow-2xs gap-1">
               <button
                 onClick={() => setView('member')}
-                className="text-xs font-bold px-3 py-2 rounded-xl bg-white border border-stone-200 text-amber-900 hover:bg-amber-50 flex items-center gap-1 shadow-xs"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-stone-700 hover:text-amber-800 hover:bg-amber-50/80 transition-all whitespace-nowrap"
               >
-                <Award className="w-3.5 h-3.5 text-amber-700" />
-                我的紀錄
+                <Award className="w-3.5 h-3.5 text-amber-600" />
+                <span>我的紀錄</span>
               </button>
               <button
                 onClick={() => setView('admin')}
-                className="text-xs font-bold px-3 py-2 rounded-xl bg-stone-900 text-white hover:bg-stone-800 flex items-center gap-1 shadow-xs"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-stone-900 text-white hover:bg-stone-800 transition-all whitespace-nowrap shadow-xs"
               >
                 <Shield className="w-3.5 h-3.5 text-amber-400" />
-                幹部後台
+                <span>幹部後台</span>
               </button>
-            </>
+            </div>
           )}
         </div>
       </header>
