@@ -192,11 +192,11 @@ const formatHours = (hours: number): string => {
   return rounded.toString();
 };
 
-const getRiderTitle = (count: number) => {
-  if (count === 0) return { title: '馬術新手', color: 'text-stone-500', bg: 'bg-stone-100', border: 'border-stone-200' };
-  if (count <= 2) return { title: '見習騎手 🐎', color: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200' };
-  if (count <= 5) return { title: '熟練騎士 🏇', color: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-200' };
-  if (count <= 9) return { title: '菁英騎手 🌟', color: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200' };
+const getRiderTitle = (hours: number) => {
+  if (hours < 15) return { title: '馬術新手', color: 'text-stone-500', bg: 'bg-stone-100', border: 'border-stone-200' };
+  if (hours < 30) return { title: '見習騎手 🐎', color: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200' };
+  if (hours < 45) return { title: '熟練騎士 🏇', color: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-200' };
+  if (hours < 60) return { title: '菁英騎手 🌟', color: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200' };
   return { title: '榮譽馬術大師 👑', color: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-200' };
 };
 
@@ -2103,7 +2103,14 @@ export default function App() {
       </div>
 
       {/* 查詢結果卡片 */}
-      {submittedMemberPin && (
+      {submittedMemberPin && (() => {
+        const memberTotalHours = memberRecords.reduce(
+          (sum, r) => sum + calculateHours(r.specificTime || r.time, r.actualTime),
+          0
+        );
+        const riderBadge = getRiderTitle(memberTotalHours);
+
+        return (
         <div className="space-y-6 max-w-2xl mx-auto box-border animate-in fade-in duration-200">
           {/* Header 徽章 */}
           <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 flex justify-between items-center box-border">
@@ -2114,8 +2121,8 @@ export default function App() {
               <div>
                 <p className="font-bold text-stone-800 text-base flex items-center gap-2">
                   {memberRealName}
-                  <span className={`text-3xs font-semibold px-2 py-0.5 rounded-full border ${getRiderTitle(memberRecords.length).border} ${getRiderTitle(memberRecords.length).bg} ${getRiderTitle(memberRecords.length).color}`}>
-                    {getRiderTitle(memberRecords.length).title}
+                  <span className={`text-3xs font-semibold px-2 py-0.5 rounded-full border ${riderBadge.border} ${riderBadge.bg} ${riderBadge.color}`}>
+                    {riderBadge.title}
                   </span>
                 </p>
                 <p className="text-xs text-stone-400 font-mono">學號 PIN: {submittedMemberPin}</p>
@@ -2216,7 +2223,8 @@ export default function App() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 
