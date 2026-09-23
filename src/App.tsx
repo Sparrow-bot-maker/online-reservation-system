@@ -450,6 +450,8 @@ export default function App() {
   const [classCheckinRealName, setClassCheckinRealName] = useState('');
   const [classCheckinResult, setClassCheckinResult] = useState<{ success: boolean; message: string; realName?: string } | null>(null);
   const [classCheckinLoading, setClassCheckinLoading] = useState(false);
+  const [fetchedSession, setFetchedSession] = useState<{ id: string; name: string; date: string; isOpen: boolean } | null>(null);
+  const [fetchedSessionLoading, setFetchedSessionLoading] = useState(false);
 
   // 加載後端預約
   const fetchBookings = useCallback(async (date: string) => {
@@ -524,6 +526,19 @@ export default function App() {
       if (sessionParam) {
         setUrlSessionId(sessionParam);
         setView('class-checkin');
+        setFetchedSession(null);
+        setFetchedSessionLoading(true);
+        fetch(`/api/class/session/${sessionParam}`)
+          .then(async (res) => {
+            if (res.ok) {
+              const data = await res.json();
+              setFetchedSession(data);
+            } else {
+              setFetchedSession(null);
+            }
+          })
+          .catch(() => setFetchedSession(null))
+          .finally(() => setFetchedSessionLoading(false));
       }
     };
 
@@ -861,13 +876,13 @@ export default function App() {
 
   // ─── 社課現場點名簽到動作 (學生) ──────────────────────────────────────────
 
-  const handleStudentClassCheckin = (e: React.FormEvent, targetSessionId: string) => {
+  const handleStudentClassCheckin = async (e: React.FormEvent, targetSessionId: string) => {
     e.preventDefault();
-    if (!classCheckinStudentId.trim() || !classCheckinNickname.trim() || !classCheckinRealName.trim()) {
+    if (!classCheckinStudentId.trim()) {
       return;
     }
 
-    const session = classSessions.find((s) => s.id === targetSessionId);
+    const session = fetchedSession;
     if (!session) {
       setClassCheckinResult({ success: false, message: '找不到此社課場次代碼，請確認是否輸入正確' });
       return;
@@ -878,69 +893,35 @@ export default function App() {
       return;
     }
 
-    // 檢查是否重複簽到
-    const already = session.attendees?.some((a) => a.studentId === classCheckinStudentId.trim());
-    if (already) {
-      setClassCheckinResult({
-        success: true,
-        message: '您先前已經完成本堂社課點名囉！',
-        realName: classCheckinRealName.trim(),
-      });
-      return;
-    }
-
-    const newAttendee = {
-      id: Math.random().toString(36).substring(2, 9),
-      studentId: classCheckinStudentId.trim(),
-      nickname: classCheckinNickname.trim(),
-      realName: classCheckinRealName.trim(),
-      checkedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
-
-    // 同步到後端
+    setClassCheckinLoading(true);
     try {
-      fetch(`/api/class/session/${targetSessionId}/checkin`, {
+      const res = await fetch(`/api/class/session/${targetSessionId}/checkin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pin: newAttendee.studentId,
-          nickname: newAttendee.nickname,
-          realName: newAttendee.realName,
-        }),
+        body: JSON.stringify({ pin: classCheckinStudentId.trim() }),
       });
-    } catch {
-      // ignore
-    }
+      const data = await res.json();
 
-    // 自動記錄學號與姓名至名冊
-    if (newAttendee.realName && newAttendee.studentId) {
-      setMemberPins((prev) => {
-        if (!prev.some((p) => p.pin === newAttendee.studentId)) {
-          return [...prev, { realName: newAttendee.realName, pin: newAttendee.studentId, createdAt: new Date().toISOString() }];
-        }
-        return prev;
-      });
-      try {
-        localStorage.setItem('app_my_student_id', newAttendee.studentId);
-        localStorage.setItem('app_my_real_name', newAttendee.realName);
-      } catch {
-        // ignore
+      if (res.status === 409 && data.alreadyChecked) {
+        setClassCheckinResult({
+          success: true,
+          message: '您先前已經完成本堂社課點名囉！',
+          realName: data.realName,
+        });
+      } else if (res.ok) {
+        setClassCheckinResult({
+          success: true,
+          message: data.message || `已成功簽到【${session.name}】！`,
+          realName: data.realName,
+        });
+      } else {
+        setClassCheckinResult({ success: false, message: data.error || '簽到失敗，請再試一次' });
       }
+    } catch {
+      setClassCheckinResult({ success: false, message: '網路錯誤，請確認連線後再試' });
+    } finally {
+      setClassCheckinLoading(false);
     }
-
-    setClassSessions((prev) =>
-      prev.map((s) =>
-        s.id === targetSessionId
-          ? { ...s, attendees: [...(s.attendees || []), newAttendee] }
-          : s
-      )
-    );
-
-    setClassCheckinResult({
-      success: true,
-      message: `已成功簽到【${session.name}】！`,
-      realName: newAttendee.realName,
-    });
   };
 
   // ─── 社員首次登記與紀錄查詢 ─────────────────────────────────────────────
@@ -1167,7 +1148,7 @@ export default function App() {
   // ═══════════════════════════════════════════════════════════════════════════
 
   if (view === 'class-checkin' && urlSessionId) {
-    const currentSession = classSessions.find((s) => s.id === urlSessionId);
+    const currentSession = fetchedSession;
 
     return (
       <div className="min-h-screen bg-stone-100/80 text-stone-900 font-sans p-4 flex items-center justify-center box-border">
@@ -1218,7 +1199,11 @@ export default function App() {
               </div>
             ) : (
               <>
-                {currentSession ? (
+                {fetchedSessionLoading ? (
+                  <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4 text-xs text-stone-500 text-center">
+                    載入場次資訊中…
+                  </div>
+                ) : currentSession ? (
                   <div className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-4 text-xs space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-amber-800 uppercase tracking-wider">今日社課場次</span>
@@ -1257,35 +1242,9 @@ export default function App() {
                         className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none transition-all font-mono text-xs"
                         placeholder="請輸入學號"
                       />
+                      <p className="text-xs text-stone-400 mt-1">請先至「我的紀錄」綁定姓名與學號</p>
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-stone-700 mb-1">
-                        綽號 <span className="text-rose-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={classCheckinNickname}
-                        onChange={(e) => setClassCheckinNickname(e.target.value)}
-                        className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none transition-all text-xs"
-                        placeholder="請輸入綽號"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-stone-700 mb-1">
-                        真實姓名 <span className="text-rose-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={classCheckinRealName}
-                        onChange={(e) => setClassCheckinRealName(e.target.value)}
-                        className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none transition-all text-xs"
-                        placeholder="請輸入真實姓名"
-                      />
-                    </div>
 
                     {classCheckinResult && !classCheckinResult.success && (
                       <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-700 flex items-start gap-2">
