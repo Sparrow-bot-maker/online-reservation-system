@@ -1315,7 +1315,7 @@ export default function App() {
       <div className="space-y-6 animate-in fade-in duration-300 w-full min-w-0 box-border">
         {/* Admin Navigation Bar */}
         <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center bg-white p-3 rounded-2xl border border-stone-200 shadow-sm gap-2">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 w-full sm:w-auto">
+          <div className="grid grid-cols-3 gap-1.5 w-full sm:w-auto">
             <button
               onClick={() => setAdminTab('overview')}
               className={`px-3 py-2 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 ${
@@ -1337,17 +1337,6 @@ export default function App() {
             >
               <Users className="w-3.5 h-3.5" />
               成員名冊
-            </button>
-            <button
-              onClick={() => setAdminTab('classes')}
-              className={`px-3 py-2 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 ${
-                adminTab === 'classes'
-                  ? 'bg-amber-600 text-white shadow-md shadow-amber-200'
-                  : 'text-stone-600 hover:bg-stone-100'
-              }`}
-            >
-              <GraduationCap className="w-3.5 h-3.5" />
-              社課場次
             </button>
             <button
               onClick={() => setAdminTab('settings')}
@@ -1509,7 +1498,7 @@ export default function App() {
                           </span>
                         )}
                       </h3>
-                      <p className="text-xs text-stone-400 mt-0.5">社員個別訓練與社課出席明細</p>
+                      <p className="text-xs text-stone-400 mt-0.5">社員個別加練訓練明細</p>
                     </div>
                   </div>
 
@@ -1559,13 +1548,11 @@ export default function App() {
                       0
                     )
                   );
-                  const memberClasses = classSessions
-                    .filter((s) => s.attendees?.some((a) => (a.realName || a.nickname) === selectedMember));
 
                   return (
                     <div className="space-y-6">
-                      {/* 3 大指標卡 */}
-                      <div className="grid grid-cols-3 gap-3">
+                      {/* 2 大指標卡 */}
+                      <div className="grid grid-cols-2 gap-3">
                         <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 text-center">
                           <p className="text-xs text-stone-500 mb-1 flex items-center justify-center gap-1">
                             <Clock className="w-3.5 h-3.5 text-amber-600" />
@@ -1584,60 +1571,29 @@ export default function App() {
                             {memberBookings.length} <span className="text-xs font-normal text-stone-400">次</span>
                           </p>
                         </div>
-                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 text-center">
-                          <p className="text-xs text-stone-500 mb-1 flex items-center justify-center gap-1">
-                            <GraduationCap className="w-3.5 h-3.5 text-emerald-600" />
-                            社課出席堂數
-                          </p>
-                          <p className="text-2xl font-black text-emerald-700">
-                            {memberClasses.length} <span className="text-xs font-normal text-stone-400">堂</span>
-                          </p>
-                        </div>
                       </div>
 
                       {/* 歷程細項 */}
-                      <div className="grid md:grid-cols-2 gap-4">
-                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-2">
-                          <h4 className="text-xs font-bold text-stone-700 flex items-center gap-1.5">
-                            <Dumbbell className="w-4 h-4 text-amber-600" />
-                            加練預約歷程
-                          </h4>
-                          {memberBookings.length === 0 ? (
-                            <p className="text-xs text-stone-400 py-3 text-center">無加練紀錄</p>
-                          ) : (
-                            memberBookings.map((b) => (
-                              <div key={b.id} className="bg-white p-2.5 rounded-xl border border-stone-200 text-xs flex justify-between">
-                                <div>
-                                  <p className="font-bold text-stone-800">{b.date}</p>
-                                  <p className="text-stone-400">{b.specificTime || b.time}</p>
-                                </div>
-                                <span className="font-bold text-amber-700">
-                                  {calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time)} hr
-                                </span>
+                      <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-2">
+                        <h4 className="text-xs font-bold text-stone-700 flex items-center gap-1.5">
+                          <Dumbbell className="w-4 h-4 text-amber-600" />
+                          加練預約歷程
+                        </h4>
+                        {memberBookings.length === 0 ? (
+                          <p className="text-xs text-stone-400 py-3 text-center">無加練紀錄</p>
+                        ) : (
+                          memberBookings.map((b) => (
+                            <div key={b.id} className="bg-white p-2.5 rounded-xl border border-stone-200 text-xs flex justify-between">
+                              <div>
+                                <p className="font-bold text-stone-800">{b.date}</p>
+                                <p className="text-stone-400">{b.specificTime || b.time}</p>
                               </div>
-                            ))
-                          )}
-                        </div>
-
-                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-2">
-                          <h4 className="text-xs font-bold text-stone-700 flex items-center gap-1.5">
-                            <GraduationCap className="w-4 h-4 text-emerald-600" />
-                            社課簽到歷程
-                          </h4>
-                          {memberClasses.length === 0 ? (
-                            <p className="text-xs text-stone-400 py-3 text-center">無社課簽到紀錄</p>
-                          ) : (
-                            memberClasses.map((s) => (
-                              <div key={s.id} className="bg-white p-2.5 rounded-xl border border-stone-200 text-xs flex justify-between">
-                                <div>
-                                  <p className="font-bold text-stone-800">{s.name}</p>
-                                  <p className="text-stone-400">日期：{s.date}</p>
-                                </div>
-                                <span className="text-emerald-700 font-bold">已簽到</span>
-                              </div>
-                            ))
-                          )}
-                        </div>
+                              <span className="font-bold text-amber-700">
+                                {calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time)} hr
+                              </span>
+                            </div>
+                          ))
+                        )}
                       </div>
                     </div>
                   );
@@ -1673,7 +1629,6 @@ export default function App() {
                           <th className="py-2.5 px-3">學號 (PIN)</th>
                           <th className="py-2.5 px-3">加練總時數</th>
                           <th className="py-2.5 px-3">加練次數</th>
-                          <th className="py-2.5 px-3">社課出席</th>
                           <th className="py-2.5 px-3">明細</th>
                         </tr>
                       </thead>
@@ -1691,7 +1646,6 @@ export default function App() {
                               </td>
                               <td className="py-2.5 px-3 font-black text-amber-700">{formatHours(m.totalHours)} hr</td>
                               <td className="py-2.5 px-3">{m.practiceCount} 次</td>
-                              <td className="py-2.5 px-3 text-emerald-800 font-bold">{m.classCount} 堂</td>
                               <td className="py-2.5 px-3">
                                 <button
                                   onClick={() => setSelectedMember(m.realName)}
@@ -1711,136 +1665,11 @@ export default function App() {
           </div>
         )}
 
-        {/* ── 3. Tab: 社課場次管理 ── */}
-        {adminTab === 'classes' && (
-          <div className="space-y-6 box-border">
-            {/* 建立新社課表單 */}
-            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 box-border">
-              <h3 className="text-base font-black text-stone-800 mb-3 flex items-center gap-2">
-                <GraduationCap className="w-5 h-5 text-amber-600" />
-                建立新社課場次 (隨機生成 10 位代碼)
-              </h3>
-              <form onSubmit={handleCreateClassSession} className="flex flex-col sm:flex-row gap-3">
-                <input
-                  type="text"
-                  required
-                  value={newClassName}
-                  onChange={(e) => setNewClassName(e.target.value)}
-                  placeholder="社課名稱"
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 outline-none text-xs"
-                />
-                <input
-                  type="date"
-                  required
-                  value={newClassDate}
-                  onChange={(e) => setNewClassDate(e.target.value)}
-                  className="px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 outline-none text-xs font-mono"
-                />
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs shrink-0"
-                >
-                  建立場次
-                </button>
-              </form>
-            </div>
-
-            {/* 場次列表 */}
-            <div className="grid sm:grid-cols-2 gap-4">
-              {classSessions.map((session) => (
-                <div
-                  key={session.id}
-                  className="bg-white p-5 rounded-3xl border border-stone-200 shadow-sm flex flex-col justify-between space-y-4"
-                >
-                  <div>
-                    <div className="flex justify-between items-start gap-2 mb-2">
-                      <span className="font-mono text-xs font-black bg-amber-50 text-amber-900 border border-amber-200 px-2.5 py-1 rounded-lg">
-                        {session.id}
-                      </span>
-                      <button
-                        onClick={() => handleToggleClassOpen(session.id)}
-                        className={`text-xs px-2.5 py-1 rounded-full font-bold transition-all ${
-                          session.isOpen
-                            ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                            : 'bg-rose-100 text-rose-700 hover:bg-rose-200'
-                        }`}
-                      >
-                        {session.isOpen ? '● 點名進行中' : '○ 已截止'}
-                      </button>
-                    </div>
-                    <h4 className="font-bold text-stone-900 text-sm">{session.name}</h4>
-                    <p className="text-xs text-stone-400 mt-1">
-                      日期：{session.date} · 簽到人數：{session.attendees?.length || 0} 人
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2 pt-2 border-t border-stone-100">
-                    <button
-                      onClick={() => setActiveQrSession(session)}
-                      className="flex-1 py-2 rounded-xl bg-stone-900 text-white text-xs font-bold hover:bg-stone-800 flex items-center justify-center gap-1"
-                    >
-                      <QrCode className="w-3.5 h-3.5" />
-                      投影 QR
-                    </button>
-                    <button
-                      onClick={() => setActiveAttendeesSession(session)}
-                      className="flex-1 py-2 rounded-xl bg-stone-100 text-stone-700 text-xs font-bold hover:bg-stone-200 flex items-center justify-center gap-1"
-                    >
-                      <Users className="w-3.5 h-3.5" />
-                      出席名冊
-                    </button>
-                    <button
-                      onClick={() => handleDeleteClassSession(session.id)}
-                      className="p-2 text-stone-400 hover:text-rose-500 rounded-xl hover:bg-stone-100"
-                      title="刪除場次"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* ── 3. Tab: 社課場次管理 ── 已隱藏，功能保留 */}
 
         {/* ── 4. Tab: 設定與 PIN (學號與真實姓名管理) ── */}
         {adminTab === 'settings' && (
           <div className="space-y-6 box-border animate-in fade-in">
-            {/* 加練現場點名密碼管理 */}
-            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200">
-              <h3 className="font-bold text-stone-800 mb-3 flex items-center gap-2 text-sm">
-                <ClipboardCheck className="w-4 h-4 text-amber-600" />
-                加練現場點名密碼
-              </h3>
-              <div className="bg-stone-50 rounded-2xl p-4 mb-3 flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-stone-500">今日加練點名 5 位數密碼：</p>
-                  <p className="text-2xl font-black text-amber-700 font-mono tracking-widest mt-0.5">
-                    {checkinPwdDisplay || '88321'}
-                  </p>
-                </div>
-                <span className="text-xs bg-amber-100 text-amber-800 font-semibold px-2.5 py-1 rounded-full">
-                  每日 00:00 自動更換
-                </span>
-              </div>
-              <form onSubmit={handleUpdateCheckinPwd} className="flex gap-2">
-                <input
-                  type="text"
-                  value={newCheckinPwd}
-                  onChange={(e) => setNewCheckinPwd(e.target.value)}
-                  placeholder="輸入新的點名密碼 (手動覆蓋)"
-                  className="flex-1 px-4 py-2 rounded-xl border border-stone-200 focus:border-amber-600 outline-none text-xs font-mono"
-                />
-                <button
-                  type="submit"
-                  disabled={checkinPwdSubmitting || !newCheckinPwd.trim()}
-                  className="px-4 py-2 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 text-xs disabled:opacity-60 shrink-0"
-                >
-                  更新
-                </button>
-              </form>
-            </div>
-
             {/* 社員學號 (PIN) 與真實姓名名冊管理 */}
             <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
               <div className="flex justify-between items-center pb-2 border-b border-stone-100">
@@ -1941,7 +1770,7 @@ export default function App() {
           <div className="w-12 h-12 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-center mb-2 shadow-inner">
             <KeyRound className="w-6 h-6 text-amber-700" />
           </div>
-          <h3 className="text-base font-black text-stone-800">個人加練與社課出席查詢</h3>
+          <h3 className="text-base font-black text-stone-800">個人加練出席查詢</h3>
           <p className="text-xs text-stone-500 mt-1">
             {memberQueryMode === 'register'
               ? '首次使用請先登記真實姓名與學號，後台將建立專屬檔案'
@@ -2374,89 +2203,7 @@ export default function App() {
         {view === 'member' && renderMemberView()}
       </main>
 
-      {/* ── 投影 QR Code Modal (含 10 位代碼與複製按鈕) ── */}
-      {activeQrSession && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs box-border">
-          <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-sm w-full border border-stone-200 text-center animate-in fade-in zoom-in-95 duration-150 box-border">
-            <div className="flex justify-between items-center pb-3 border-b border-stone-100">
-              <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
-                現場掃碼點名
-              </span>
-              <button
-                onClick={() => setActiveQrSession(null)}
-                className="text-stone-400 hover:text-stone-600 p-1 rounded-full hover:bg-stone-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <h3 className="font-black text-stone-800 text-base mt-3">{activeQrSession.name}</h3>
-            <p className="text-xs text-stone-500 mt-0.5">日期：{activeQrSession.date}</p>
-
-            <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 inline-block shadow-inner my-3">
-              {qrModalDataUrl ? (
-                <img src={qrModalDataUrl} alt="QR Code" width={260} height={260} className="rounded-xl max-w-full" />
-              ) : (
-                <div className="w-[260px] h-[260px] flex items-center justify-center">
-                  <RefreshCw className="w-8 h-8 text-stone-400 animate-spin" />
-                </div>
-              )}
-            </div>
-
-            <div className="p-3 bg-amber-50 rounded-xl border border-amber-100 text-xs text-stone-700 flex justify-between items-center">
-              <span>場次代碼 (10字)：<span className="font-mono font-bold text-amber-900">{activeQrSession.id}</span></span>
-              <button
-                onClick={() => copySessionCode(activeQrSession.id)}
-                className="text-xs font-bold px-2.5 py-1 bg-white border border-amber-200 rounded-lg text-amber-800 hover:bg-amber-100"
-              >
-                {copiedSessionId === activeQrSession.id ? '已複製' : '複製代碼'}
-              </button>
-            </div>
-
-            <p className="text-3xs text-stone-400 mt-3">請學生使用手機掃描此 QR Code 即可直接進入點名</p>
-          </div>
-        </div>
-      )}
-
-      {/* ── 後台專用：檢視名冊 Modal ── */}
-      {activeAttendeesSession && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/40 backdrop-blur-xs box-border">
-          <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-lg w-full border border-stone-200 max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95 duration-150 box-border">
-            <div className="flex justify-between items-center pb-4 border-b border-stone-100">
-              <div>
-                <h3 className="font-black text-stone-800 text-base">{activeAttendeesSession.name}</h3>
-                <p className="text-xs text-stone-500 mt-0.5">
-                  日期：{activeAttendeesSession.date} · 簽到人數：{activeAttendeesSession.attendees?.length || 0} 人
-                </p>
-              </div>
-              <button
-                onClick={() => setActiveAttendeesSession(null)}
-                className="text-stone-400 hover:text-stone-600 p-1.5 rounded-full hover:bg-stone-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto py-4 space-y-2">
-              {!activeAttendeesSession.attendees || activeAttendeesSession.attendees.length === 0 ? (
-                <p className="text-center py-8 text-xs text-stone-400">目前尚無人簽到</p>
-              ) : (
-                activeAttendeesSession.attendees.map((a, idx) => (
-                  <div key={a.id} className="flex items-center gap-3 bg-stone-50 p-3 rounded-xl border border-stone-100">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
-                      {idx + 1}
-                    </span>
-                    <div className="flex-1 min-w-0 text-xs">
-                      <p className="font-bold text-stone-800">{a.nickname} ({a.realName})</p>
-                      <p className="text-stone-400 font-mono">學號: {a.studentId || '—'} · 簽到: {a.checkedAt}</p>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── 投影 QR Code Modal / 後台出席名冊 Modal ── 已隱藏，功能保留 */}
 
       {/* ── 加練預約資料填寫 Modal ── */}
       {view === 'user' && showModal && bookingSlot && (
