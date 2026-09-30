@@ -1089,7 +1089,7 @@ export default function App() {
   const todayStr = getTodayTW();
 
   // 彙整後台所有加練預約（排序與篩選今後預約）
-  const { upcomingBookings, pastBookings } = useMemo(() => {
+  const { todayBookings, upcomingBookings, pastBookings } = useMemo(() => {
     const allBookingsSource = adminBookings.length > 0 ? adminBookings : bookings;
     const sorted = [...allBookingsSource].sort((a, b) => {
       const cmp = a.date.localeCompare(b.date);
