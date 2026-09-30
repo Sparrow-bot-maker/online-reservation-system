@@ -598,7 +598,7 @@ export default function App() {
       realName: formData.realName.trim(),
       studentId: formData.studentId.trim(),
       createdAt: new Date().toISOString(),
-      attendance_status: 'attended',
+      attendance_status: 'pending',
     };
 
     // 同步嘗試發送至後端
@@ -751,6 +751,25 @@ export default function App() {
     setClassSessions((prev) => prev.filter((s) => s.id !== id));
     if (activeQrSession?.id === id) setActiveQrSession(null);
     if (activeAttendeesSession?.id === id) setActiveAttendeesSession(null);
+  };
+
+  const handleDeleteClassAttendance = async (attendanceId: string | number, sessionId: string) => {
+    try {
+      await fetch(`/api/admin/class-attendance/${attendanceId}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-password': adminPassword },
+      });
+    } catch {
+      // ignore
+    }
+    // 從本地 state 移除
+    setClassSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId
+          ? { ...s, attendees: (s.attendees ?? []).filter((a) => a.id !== attendanceId) }
+          : s
+      )
+    );
   };
 
   const copySessionCode = (code: string) => {
@@ -1672,6 +1691,71 @@ export default function App() {
         {/* ── 4. Tab: 設定與 PIN (學號與真實姓名管理) ── */}
         {adminTab === 'settings' && (
           <div className="space-y-6 box-border animate-in fade-in">
+            {/* 社課場次出席名單管理 */}
+            <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
+              <div className="flex justify-between items-center pb-2 border-b border-stone-100">
+                <h3 className="font-bold text-stone-800 flex items-center gap-2 text-sm">
+                  <ClipboardList className="w-4 h-4 text-amber-600" />
+                  社課場次出席名單管理
+                </h3>
+                <span className="text-xs text-stone-400">共 {classSessions.length} 場</span>
+              </div>
+              {classSessions.length === 0 ? (
+                <p className="text-xs text-stone-400 py-4 text-center">尚無社課場次</p>
+              ) : (
+                <div className="space-y-3">
+                  {classSessions.map((s) => (
+                    <div key={s.id} className="border border-stone-100 rounded-2xl overflow-hidden">
+                      {/* 場次 header */}
+                      <div className="flex items-center justify-between bg-stone-50 px-4 py-2.5">
+                        <div>
+                          <span className="font-bold text-stone-800 text-xs">{s.name}</span>
+                          <span className="text-stone-400 text-xs ml-2">{s.date}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${s.isOpen ? 'bg-emerald-100 text-emerald-700' : 'bg-stone-100 text-stone-500'}`}>
+                            {s.isOpen ? '點名中' : '已截止'}
+                          </span>
+                          <span className="text-xs text-stone-400">{(s.attendees ?? []).length} 人</span>
+                        </div>
+                      </div>
+                      {/* 出席名單 */}
+                      {(s.attendees ?? []).length === 0 ? (
+                        <p className="text-xs text-stone-400 px-4 py-2 text-center">尚無出席紀錄</p>
+                      ) : (
+                        <div className="divide-y divide-stone-100">
+                          {(s.attendees ?? []).map((a, idx) => (
+                            <div key={a.id} className="flex items-center justify-between px-4 py-2 text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="text-stone-400 w-5 text-right">{idx + 1}.</span>
+                                <span className="font-bold text-stone-800">{a.realName}</span>
+                                {a.checkedAt && (
+                                  <span className="text-stone-400">
+                                    {new Date(a.checkedAt).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                )}
+                              </div>
+                              <button
+                                onClick={() => {
+                                  if (window.confirm(`確定要移除 ${a.realName} 的出席紀錄？`)) {
+                                    handleDeleteClassAttendance(a.id, s.id);
+                                  }
+                                }}
+                                className="text-stone-300 hover:text-rose-500 transition-colors p-1"
+                                title="移除此筆出席紀錄"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* 社員學號 (PIN) 與真實姓名名冊管理 */}
             <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4">
               <div className="flex justify-between items-center pb-2 border-b border-stone-100">
