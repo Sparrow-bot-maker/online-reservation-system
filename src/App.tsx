@@ -434,6 +434,15 @@ export default function App() {
   const [checkinPwdDisplay, setCheckinPwdDisplay] = useState('88321');
   const [newCheckinPwd, setNewCheckinPwd] = useState('');
   const [checkinPwdSubmitting, setCheckinPwdSubmitting] = useState(false);
+
+  // 加練現場點名彈窗 State
+  const [checkinModalBooking, setCheckinModalBooking] = useState<Booking | null>(null);
+  const [checkinInputPassword, setCheckinInputPassword] = useState('');
+  const [checkinLoading, setCheckinLoading] = useState(false);
+  const [checkinError, setCheckinError] = useState('');
+  const [showQuickCheckinModal, setShowQuickCheckinModal] = useState(false);
+  const [quickCheckinSelectedId, setQuickCheckinSelectedId] = useState('');
+
   const [showClearAllModal, setShowClearAllModal] = useState(false);
   const [clearAllConfirmText, setClearAllConfirmText] = useState('');
   const [clearingAll, setClearingAll] = useState(false);
@@ -742,6 +751,121 @@ export default function App() {
       if (saved) {
         const all: Booking[] = JSON.parse(saved);
         localStorage.setItem('app_bookings', JSON.stringify(all.filter((b) => b.id !== id)));
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  // ─── 社員加練現場密碼點名 ──────────────────────────────────────────────────
+  const handleStudentPracticeCheckin = async (bookingId: string, passwordInput: string) => {
+    const pwd = passwordInput.trim();
+    if (!pwd) {
+      setCheckinError('請輸入現場點名密碼');
+      return;
+    }
+    setCheckinLoading(true);
+    setCheckinError('');
+
+    try {
+      const res = await fetch(`/api/bookings/${bookingId}/checkin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checkinPassword: pwd }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setCheckinError(data.error || '點名失敗，請確認點名密碼');
+        setCheckinLoading(false);
+        return;
+      }
+
+      setBookings((prev) =>
+        prev.map((b) => (b.id === bookingId ? { ...b, attendance_status: 'attended' } : b))
+      );
+      setAdminBookings((prev) =>
+        prev.map((b) => (b.id === bookingId ? { ...b, attendance_status: 'attended' } : b))
+      );
+
+      try {
+        const saved = localStorage.getItem('app_bookings');
+        if (saved) {
+          const all: Booking[] = JSON.parse(saved);
+          const updated = all.map((b) =>
+            b.id === bookingId ? { ...b, attendance_status: 'attended' } : b
+          );
+          localStorage.setItem('app_bookings', JSON.stringify(updated));
+        }
+      } catch {
+        // ignore
+      }
+
+      setCheckinModalBooking(null);
+      setShowQuickCheckinModal(false);
+      setCheckinInputPassword('');
+      alert('🎉 現場點名成功！已計入加練出席時數。');
+    } catch {
+      // 離線降級支援
+      if (pwd === checkinPwdDisplay) {
+        setBookings((prev) =>
+          prev.map((b) => (b.id === bookingId ? { ...b, attendance_status: 'attended' } : b))
+        );
+        setAdminBookings((prev) =>
+          prev.map((b) => (b.id === bookingId ? { ...b, attendance_status: 'attended' } : b))
+        );
+        try {
+          const saved = localStorage.getItem('app_bookings');
+          if (saved) {
+            const all: Booking[] = JSON.parse(saved);
+            const updated = all.map((b) =>
+              b.id === bookingId ? { ...b, attendance_status: 'attended' } : b
+            );
+            localStorage.setItem('app_bookings', JSON.stringify(updated));
+          }
+        } catch {
+          // ignore
+        }
+        setCheckinModalBooking(null);
+        setShowQuickCheckinModal(false);
+        setCheckinInputPassword('');
+        alert('🎉 現場點名成功 (離線備援)！已計入加練出席時數。');
+      } else {
+        setCheckinError('密碼錯誤或無法連線至伺服器');
+      }
+    } finally {
+      setCheckinLoading(false);
+    }
+  };
+
+  // ─── 管理員手動切換加練出缺席狀態 ──────────────────────────────────────────
+  const handleUpdateBookingStatus = async (id: string, status: 'attended' | 'absent' | 'pending') => {
+    try {
+      await fetch(`/api/admin/bookings/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-password': adminPassword,
+        },
+        body: JSON.stringify({ attendance_status: status }),
+      });
+    } catch (err) {
+      console.error('更新點名狀態失敗', err);
+    }
+
+    setAdminBookings((prev) =>
+      prev.map((b) => (b.id === id ? { ...b, attendance_status: status } : b))
+    );
+    setBookings((prev) =>
+      prev.map((b) => (b.id === id ? { ...b, attendance_status: status } : b))
+    );
+
+    try {
+      const saved = localStorage.getItem('app_bookings');
+      if (saved) {
+        const all: Booking[] = JSON.parse(saved);
+        const updated = all.map((b) => (b.id === id ? { ...b, attendance_status: status } : b));
+        localStorage.setItem('app_bookings', JSON.stringify(updated));
       }
     } catch {
       // ignore
@@ -1096,7 +1220,7 @@ export default function App() {
     } catch {
       // ignore
     }
-    const myPractice = allStoredBookings.filter((b) => b.studentId === pin);
+    const myPractice = allStoredBookings.filter((b) => b.studentId === pin && b.attendance_status === 'attended');
     const matchedName = myPractice[0]?.realName || memberPins.find((p) => p.pin === pin)?.realName || '社員';
     setMemberRealName(matchedName);
     setMemberRecords(
@@ -1187,11 +1311,12 @@ export default function App() {
       });
     });
 
-    // 2. 加練預約
+    // 2. 加練預約（僅計算已出席 attended 紀錄）
     const allBookingsSource = adminBookings.length > 0 ? adminBookings : bookings;
     allBookingsSource.forEach((b) => {
       const name = b.realName || b.nickname;
       if (!name) return;
+      if (b.attendance_status !== 'attended') return;
       const current = map.get(name) || {
         realName: name,
         studentId: b.studentId || '',
@@ -1512,6 +1637,29 @@ export default function App() {
               </div>
             </div>
 
+            {/* 今日現場點名密碼資訊條 */}
+            <div className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-4 flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-600 text-white flex items-center justify-center font-black shadow-xs shrink-0">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-stone-600">今日加練現場點名密碼：</span>
+                    <span className="font-mono text-xl font-black text-amber-800 tracking-wider">
+                      {checkinPwdDisplay || '88321'}
+                    </span>
+                    <span className="text-3xs bg-amber-200/70 text-amber-900 font-semibold px-2 py-0.5 rounded-full">
+                      每日 00:00 自動更換
+                    </span>
+                  </div>
+                  <p className="text-3xs text-stone-500 mt-0.5">
+                    社員至馬場現場後輸入此 5 碼即可完成點名；教練亦可直接於下方列表點選按鈕手動點名。
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {(() => {
               const displayList =
                 adminOverviewScope === 'today'
@@ -1543,7 +1691,9 @@ export default function App() {
                         <th className="py-2.5 px-3">綽號</th>
                         <th className="py-2.5 px-3">本名</th>
                         <th className="py-2.5 px-3">時數</th>
-                        <th className="py-2.5 px-3">操作</th>
+                        <th className="py-2.5 px-3 text-center">點名狀態</th>
+                        <th className="py-2.5 px-3 text-center">現場點名</th>
+                        <th className="py-2.5 px-3 text-center">操作</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-100">
@@ -1566,10 +1716,65 @@ export default function App() {
                             <td className="py-2.5 px-3 font-bold text-amber-700">
                               {calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time)} hr
                             </td>
-                            <td className="py-2.5 px-3">
+                            <td className="py-2.5 px-3 text-center">
+                              {b.attendance_status === 'attended' ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-3xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" /> 已出席
+                                </span>
+                              ) : b.attendance_status === 'absent' ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-3xs font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                  <AlertCircle className="w-3 h-3 text-rose-600" /> 缺席
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-3xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                  <Clock className="w-3 h-3 text-amber-600" /> 待點名
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <div className="inline-flex items-center gap-1 bg-stone-100 p-0.5 rounded-lg border border-stone-200">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateBookingStatus(b.id, 'attended')}
+                                  className={`px-2 py-1 rounded-md text-3xs font-bold transition-all ${
+                                    b.attendance_status === 'attended'
+                                      ? 'bg-emerald-600 text-white shadow-xs'
+                                      : 'text-stone-600 hover:text-emerald-700 hover:bg-white'
+                                  }`}
+                                  title="標記為已出席"
+                                >
+                                  出席
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateBookingStatus(b.id, 'absent')}
+                                  className={`px-2 py-1 rounded-md text-3xs font-bold transition-all ${
+                                    b.attendance_status === 'absent'
+                                      ? 'bg-rose-600 text-white shadow-xs'
+                                      : 'text-stone-600 hover:text-rose-700 hover:bg-white'
+                                  }`}
+                                  title="標記為未出席"
+                                >
+                                  缺席
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateBookingStatus(b.id, 'pending')}
+                                  className={`px-2 py-1 rounded-md text-3xs font-bold transition-all ${
+                                    b.attendance_status === 'pending' || !b.attendance_status
+                                      ? 'bg-stone-700 text-white shadow-xs'
+                                      : 'text-stone-500 hover:text-stone-700 hover:bg-white'
+                                  }`}
+                                  title="重置為待點名"
+                                >
+                                  待定
+                                </button>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
                               <button
                                 onClick={() => handleCancelBooking(b.id)}
-                                className="text-rose-500 hover:text-rose-700 p-1"
+                                className="text-stone-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition-colors"
                                 title="刪除預約"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1650,8 +1855,9 @@ export default function App() {
                 {(() => {
                   const memberBookings = (adminBookings.length > 0 ? adminBookings : bookings)
                     .filter((b) => (b.realName || b.nickname) === selectedMember);
+                  const attendedBookings = memberBookings.filter((b) => b.attendance_status === 'attended');
                   const totalHrs = formatHours(
-                    memberBookings.reduce(
+                    attendedBookings.reduce(
                       (sum, b) => sum + calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time),
                       0
                     )
@@ -1664,7 +1870,7 @@ export default function App() {
                         <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 text-center">
                           <p className="text-xs text-stone-500 mb-1 flex items-center justify-center gap-1">
                             <Clock className="w-3.5 h-3.5 text-amber-600" />
-                            加練總時數
+                            有效加練總時數
                           </p>
                           <p className="text-2xl font-black text-amber-700">
                             {totalHrs} <span className="text-xs font-normal text-stone-400">小時</span>
@@ -1676,7 +1882,7 @@ export default function App() {
                             加練出席次數
                           </p>
                           <p className="text-2xl font-black text-stone-800">
-                            {memberBookings.length} <span className="text-xs font-normal text-stone-400">次</span>
+                            {attendedBookings.length} <span className="text-xs font-normal text-stone-400">次 (共 {memberBookings.length} 次預約)</span>
                           </p>
                         </div>
                       </div>
@@ -1690,17 +1896,36 @@ export default function App() {
                         {memberBookings.length === 0 ? (
                           <p className="text-xs text-stone-400 py-3 text-center">無加練紀錄</p>
                         ) : (
-                          memberBookings.map((b) => (
-                            <div key={b.id} className="bg-white p-2.5 rounded-xl border border-stone-200 text-xs flex justify-between">
-                              <div>
-                                <p className="font-bold text-stone-800">{b.date}</p>
-                                <p className="text-stone-400">{b.specificTime || b.time}</p>
+                          memberBookings.map((b) => {
+                            const isAttended = b.attendance_status === 'attended';
+                            const isAbsent = b.attendance_status === 'absent';
+                            return (
+                              <div key={b.id} className="bg-white p-2.5 rounded-xl border border-stone-200 text-xs flex justify-between items-center">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <p className="font-bold text-stone-800">{b.date}</p>
+                                    {isAttended ? (
+                                      <span className="text-3xs font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md">
+                                        已出席
+                                      </span>
+                                    ) : isAbsent ? (
+                                      <span className="text-3xs font-bold px-2 py-0.5 bg-rose-100 text-rose-800 rounded-md">
+                                        未出席
+                                      </span>
+                                    ) : (
+                                      <span className="text-3xs font-bold px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md">
+                                        待點名
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-stone-400 mt-0.5">{b.specificTime || b.time}</p>
+                                </div>
+                                <span className={`font-bold ${isAttended ? 'text-amber-700' : 'text-stone-400 line-through'}`}>
+                                  {calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time)} hr
+                                </span>
                               </div>
-                              <span className="font-bold text-amber-700">
-                                {calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time)} hr
-                              </span>
-                            </div>
-                          ))
+                            );
+                          })
                         )}
                       </div>
                     </div>
@@ -2222,13 +2447,30 @@ export default function App() {
       <div className="space-y-6 w-full box-border min-w-0">
         <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-4 w-full box-border">
           <div className="flex justify-between items-center pb-2 border-b border-stone-100">
-            <h3 className="text-base font-black text-stone-800 flex items-center gap-2">
-              <Users className="w-5 h-5 text-amber-600" />
-              {selectedDate} 加練名單
-            </h3>
-            <span className="text-xs text-stone-400 font-semibold">
-              共 {bookings.filter((b) => b.date === selectedDate).length} 人
-            </span>
+            <div>
+              <h3 className="text-base font-black text-stone-800 flex items-center gap-2">
+                <Users className="w-5 h-5 text-amber-600" />
+                {selectedDate} 加練名單
+              </h3>
+              <p className="text-3xs text-stone-400 mt-0.5">
+                共 {bookings.filter((b) => b.date === selectedDate).length} 人預約
+              </p>
+            </div>
+            {selectedDate === todayStr && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowQuickCheckinModal(true);
+                  setQuickCheckinSelectedId('');
+                  setCheckinInputPassword('');
+                  setCheckinError('');
+                }}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors shrink-0"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                現場點名
+              </button>
+            )}
           </div>
 
           <div className="space-y-2.5 max-h-[480px] overflow-y-auto pr-1">
@@ -2239,6 +2481,8 @@ export default function App() {
                 .filter((b) => b.date === selectedDate)
                 .map((b) => {
                   const isMine = myBookingIds.includes(b.id);
+                  const isAttended = b.attendance_status === 'attended';
+                  const isAbsent = b.attendance_status === 'absent';
                   return (
                     <div
                       key={b.id}
@@ -2248,17 +2492,17 @@ export default function App() {
                           : 'bg-stone-50 border-stone-100'
                       }`}
                     >
-                      <div className="flex justify-between items-center">
-                        <div className="space-y-1">
+                      <div className="flex justify-between items-start gap-2">
+                        <div className="space-y-1.5 min-w-0">
                           <p className="font-black text-stone-800 text-xs flex items-center gap-1.5">
-                            {b.nickname}
+                            <span className="truncate">{b.nickname}</span>
                             {isMine && (
-                              <span className="text-3xs font-bold px-2 py-0.5 bg-amber-600 text-white rounded-full">
+                              <span className="text-3xs font-bold px-2 py-0.5 bg-amber-600 text-white rounded-full shrink-0">
                                 我的預約
                               </span>
                             )}
                           </p>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs text-amber-900 font-bold font-mono bg-white px-2 py-0.5 rounded-md border border-stone-200">
                               ⏰ {b.time}
                             </span>
@@ -2266,15 +2510,51 @@ export default function App() {
                               ({calculateHours(b.time)} hr)
                             </span>
                           </div>
+
+                          {/* 現場點名狀態 Badge */}
+                          <div>
+                            {isAttended ? (
+                              <span className="inline-flex items-center gap-1 text-3xs font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-200">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" /> 已完成現場點名
+                              </span>
+                            ) : isAbsent ? (
+                              <span className="inline-flex items-center gap-1 text-3xs font-bold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-md border border-rose-200">
+                                <AlertCircle className="w-3 h-3 text-rose-600" /> 未出席加練
+                              </span>
+                            ) : selectedDate === todayStr ? (
+                              <span className="inline-flex items-center gap-1 text-3xs font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-200">
+                                <Clock className="w-3 h-3 text-amber-600" /> 待現場點名
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
-                        {isMine && (
-                          <button
-                            onClick={() => handleCancelBooking(b.id)}
-                            className="text-xs font-bold text-rose-500 hover:text-rose-700 bg-white border border-rose-200 px-2 py-1 rounded-lg"
-                          >
-                            取消
-                          </button>
-                        )}
+
+                        {/* 動作按鈕 */}
+                        <div className="flex flex-col items-end gap-1.5 shrink-0">
+                          {selectedDate === todayStr && !isAttended && !isAbsent && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCheckinModalBooking(b);
+                                setCheckinInputPassword('');
+                                setCheckinError('');
+                              }}
+                              className="text-xs font-bold text-amber-900 bg-amber-300 hover:bg-amber-400 border border-amber-400/60 px-2.5 py-1 rounded-xl shadow-2xs flex items-center gap-1 transition-colors"
+                            >
+                              <KeyRound className="w-3 h-3" />
+                              點名
+                            </button>
+                          )}
+                          {isMine && !isAttended && (
+                            <button
+                              type="button"
+                              onClick={() => handleCancelBooking(b.id)}
+                              className="text-3xs font-bold text-rose-500 hover:text-rose-700 bg-white border border-rose-200 px-2 py-0.5 rounded-lg"
+                            >
+                              取消
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -2432,6 +2712,192 @@ export default function App() {
                   className="flex-1 px-4 py-3 rounded-xl bg-amber-600 text-white font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs transition-colors"
                 >
                   確認預約
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── 現場加練密碼點名 Modal (單一預約快速點名) ── */}
+      {checkinModalBooking && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150 box-border">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-sm w-full border border-stone-200 text-center space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b border-stone-100">
+              <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full flex items-center gap-1">
+                <KeyRound className="w-3.5 h-3.5" /> 現場加練點名
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setCheckinModalBooking(null);
+                  setCheckinInputPassword('');
+                  setCheckinError('');
+                }}
+                className="text-stone-400 hover:text-stone-600 p-1 rounded-full hover:bg-stone-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-stone-50 rounded-2xl p-4 text-left space-y-1.5 border border-stone-100 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-stone-500">預約社員：</span>
+                <span className="font-bold text-stone-800 text-sm">{checkinModalBooking.nickname}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-stone-500">加練時段：</span>
+                <span className="font-mono font-bold text-amber-800">{checkinModalBooking.time}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-stone-500">加練日期：</span>
+                <span className="font-mono text-stone-600">{checkinModalBooking.date}</span>
+              </div>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleStudentPracticeCheckin(checkinModalBooking.id, checkinInputPassword);
+              }}
+              className="space-y-3"
+            >
+              <div className="space-y-1 text-left">
+                <label className="text-xs font-bold text-stone-700">請輸入教練現場 5 位數點名密碼：</label>
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  maxLength={5}
+                  value={checkinInputPassword}
+                  onChange={(e) => setCheckinInputPassword(e.target.value.replace(/\D/g, ''))}
+                  placeholder="例如：88321"
+                  className="w-full text-center tracking-widest text-2xl font-mono font-black py-2.5 rounded-xl border border-stone-300 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none"
+                />
+              </div>
+
+              {checkinError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-1.5 text-left">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                  <span>{checkinError}</span>
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCheckinModalBooking(null);
+                    setCheckinInputPassword('');
+                    setCheckinError('');
+                  }}
+                  className="flex-1 py-2.5 rounded-xl border border-stone-200 text-stone-600 font-bold text-xs hover:bg-stone-50"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={checkinLoading || checkinInputPassword.length !== 5}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-600 text-white font-bold text-xs hover:bg-amber-700 disabled:opacity-50 transition-colors shadow-xs"
+                >
+                  {checkinLoading ? '驗證中…' : '確認點名'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── 快速現場點名 Modal (跨裝置/未儲存可自選今日預約) ── */}
+      {showQuickCheckinModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150 box-border">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-sm w-full border border-stone-200 text-center space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b border-stone-100">
+              <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full flex items-center gap-1">
+                <KeyRound className="w-3.5 h-3.5" /> 今日加練現場點名
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowQuickCheckinModal(false);
+                  setCheckinInputPassword('');
+                  setCheckinError('');
+                }}
+                className="text-stone-400 hover:text-stone-600 p-1 rounded-full hover:bg-stone-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!quickCheckinSelectedId) {
+                  setCheckinError('請選擇您的加練預約');
+                  return;
+                }
+                handleStudentPracticeCheckin(quickCheckinSelectedId, checkinInputPassword);
+              }}
+              className="space-y-3 text-left"
+            >
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-700">1. 選擇您的加練預約：</label>
+                <select
+                  value={quickCheckinSelectedId}
+                  onChange={(e) => setQuickCheckinSelectedId(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-stone-300 focus:border-amber-600 outline-none text-xs font-bold bg-white"
+                >
+                  <option value="">-- 請選擇您的預約紀錄 --</option>
+                  {bookings
+                    .filter((b) => b.date === todayStr && b.attendance_status !== 'attended')
+                    .map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.nickname}（時段：{b.time}）
+                      </option>
+                    ))}
+                </select>
+                {bookings.filter((b) => b.date === todayStr && b.attendance_status !== 'attended').length === 0 && (
+                  <p className="text-3xs text-stone-400 mt-1">今日尚無待點名的加練預約</p>
+                )}
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-700">2. 請輸入現場 5 位數點名密碼：</label>
+                <input
+                  type="text"
+                  maxLength={5}
+                  value={checkinInputPassword}
+                  onChange={(e) => setCheckinInputPassword(e.target.value.replace(/\D/g, ''))}
+                  placeholder="例如：88321"
+                  className="w-full text-center tracking-widest text-2xl font-mono font-black py-2.5 rounded-xl border border-stone-300 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none"
+                />
+              </div>
+
+              {checkinError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                  <span>{checkinError}</span>
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowQuickCheckinModal(false);
+                    setCheckinInputPassword('');
+                    setCheckinError('');
+                  }}
+                  className="flex-1 py-2.5 rounded-xl border border-stone-200 text-stone-600 font-bold text-xs hover:bg-stone-50"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={checkinLoading || !quickCheckinSelectedId || checkinInputPassword.length !== 5}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-600 text-white font-bold text-xs hover:bg-amber-700 disabled:opacity-50 transition-colors shadow-xs"
+                >
+                  {checkinLoading ? '驗證中…' : '確認點名'}
                 </button>
               </div>
             </form>

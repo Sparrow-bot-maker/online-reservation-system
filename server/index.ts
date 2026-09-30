@@ -139,7 +139,7 @@ app.get('/api/bookings', async (req, res) => {
 
   try {
     const { rows } = await sql`
-      SELECT id, date, time, nickname FROM bookings WHERE date = ${date} ORDER BY created_at
+      SELECT id, date, time, nickname, attendance_status FROM bookings WHERE date = ${date} ORDER BY created_at
     `;
     res.json(rows);
   } catch (err) {
