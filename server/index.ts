@@ -114,11 +114,11 @@ async function getOrCreateDailyCheckinPassword(): Promise<string> {
   return pwdRow.value;
 }
 
-/** 取得允許的日期清單（今天 ~ 今天+3 天，UTC+8） */
+/** 取得允許的日期清單（今天 ~ 今天+6 天，UTC+8） */
 function getAllowedDates(): string[] {
   const today = getTodayTW();
   const base = new Date(today + 'T00:00:00Z');
-  return Array.from({ length: 4 }, (_, i) => {
+  return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(base.getTime() + i * 86400000);
     return d.toISOString().split('T')[0];
   });
@@ -172,7 +172,7 @@ app.post('/api/bookings', async (req, res) => {
   // 日期範圍驗證
   const allowed = getAllowedDates();
   if (!allowed.includes(date)) {
-    res.status(400).json({ error: '預約日期必須在今天至三天後之間' });
+    res.status(400).json({ error: '預約日期必須在今天至六天後之間' });
     return;
   }
 

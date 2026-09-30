@@ -141,10 +141,11 @@ const getTodayTW = (): string => {
 const generateDates = () => {
   const dates = [];
   const today = new Date();
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 7; i++) {
     const d = new Date(today);
     d.setDate(today.getDate() + i);
-    const dateString = d.toISOString().split('T')[0];
+    // 用本地時間格式化，避免 toISOString() UTC 偏移導致日期跑偏
+    const dateString = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const displayString = `${d.getMonth() + 1}/${d.getDate()} (${
       ['日', '一', '二', '三', '四', '五', '六'][d.getDay()]
     })`;
