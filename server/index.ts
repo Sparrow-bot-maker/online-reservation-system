@@ -186,6 +186,29 @@ app.post('/api/bookings', async (req, res) => {
     return;
   }
 
+  // 驗證預約日期與時間不可為過去（台灣時間 UTC+8）
+  const todayStr = getTodayTW();
+  if (date < todayStr) {
+    res.status(400).json({ error: '無法預約過去的日期' });
+    return;
+  }
+
+  if (date === todayStr) {
+    const cleanTime = sanitizeTime(specificTime || time);
+    const [sStart] = cleanTime.split('~');
+    const [h, m] = (sStart || '').split(':').map(Number);
+    const startMins = (h || 0) * 60 + (m || 0);
+
+    const now = new Date();
+    const tw = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    const currentTWMinutes = tw.getUTCHours() * 60 + tw.getUTCMinutes();
+
+    if (startMins <= currentTWMinutes) {
+      res.status(400).json({ error: '預約開始時間已過，無法預約過去的時段' });
+      return;
+    }
+  }
+
   // 新增預約
   const id = Math.random().toString(36).substring(2, 9);
   try {

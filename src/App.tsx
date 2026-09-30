@@ -139,17 +139,26 @@ const getTodayTW = (): string => {
   return tw.toISOString().split('T')[0];
 };
 
+const getCurrentTW = (): { date: string; minutes: number } => {
+  const now = new Date();
+  const tw = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  return {
+    date: tw.toISOString().split('T')[0],
+    minutes: tw.getUTCHours() * 60 + tw.getUTCMinutes(),
+  };
+};
+
 const generateDates = () => {
   const dates = [];
-  const today = new Date();
+  const now = new Date();
+  const tw = new Date(now.getTime() + 8 * 60 * 60 * 1000);
   for (let i = 0; i < 7; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() + i);
-    // 用本地時間格式化，避免 toISOString() UTC 偏移導致日期跑偏
-    const dateString = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const displayString = `${d.getMonth() + 1}/${d.getDate()} (${
-      ['日', '一', '二', '三', '四', '五', '六'][d.getDay()]
-    })`;
+    const d = new Date(tw.getTime() + i * 86400000);
+    const dateString = d.toISOString().split('T')[0];
+    const month = d.getUTCMonth() + 1;
+    const day = d.getUTCDate();
+    const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][d.getUTCDay()];
+    const displayString = `${month}/${day} (${dayOfWeek})`;
     dates.push({ value: dateString, display: displayString });
   }
   return dates;
@@ -202,9 +211,40 @@ const getRiderTitle = (hours: number) => {
   return { title: '榮譽馬術大師 👑', color: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-200' };
 };
 
-const validatePracticeTime = (start: string, end: string): string | null => {
+/** 取得特定日期最早可用的預約時段（滿 2 小時） */
+const getFirstAvailablePracticeSlot = (date: string): { start: string; end: string } | null => {
+  const { date: todayStr, minutes: currentMinutes } = getCurrentTW();
+  const isToday = date === todayStr;
+
+  for (const range of PRACTICE_RANGES) {
+    for (let s = range.start; s <= range.end - MIN_DURATION_MINS; s += 15) {
+      if (!isToday || s > currentMinutes) {
+        const e = s + MIN_DURATION_MINS;
+        const startStr = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+        const endStr = `${String(Math.floor(e / 60)).padStart(2, '0')}:${String(e % 60).padStart(2, '0')}`;
+        return { start: startStr, end: endStr };
+      }
+    }
+  }
+  return null;
+};
+
+const validatePracticeTime = (start: string, end: string, date?: string): string | null => {
   const s = timeToMins(start);
   const e = timeToMins(end);
+
+  if (date) {
+    const { date: todayStr, minutes: currentMinutes } = getCurrentTW();
+    if (date < todayStr) {
+      return '無法預約過去的日期';
+    }
+    if (date === todayStr) {
+      if (s <= currentMinutes) {
+        return `預約開始時間已過（${start} 已過），無法預約過去的時段`;
+      }
+    }
+  }
+
   if (e <= s) return '結束時間必須晚於開始時間';
   if (e - s < MIN_DURATION_MINS) {
     const diff = e - s;
@@ -326,8 +366,9 @@ export default function App() {
       return [];
     }
   });
-  const [practiceStart, setPracticeStart] = useState('09:00');
-  const [practiceEnd, setPracticeEnd] = useState('11:00');
+  const initialSlot = getFirstAvailablePracticeSlot(dates[0].value);
+  const [practiceStart, setPracticeStart] = useState(initialSlot?.start ?? '09:00');
+  const [practiceEnd, setPracticeEnd] = useState(initialSlot?.end ?? '11:00');
   const [practiceError, setPracticeError] = useState('');
 
   // 模態框與表單
@@ -563,16 +604,34 @@ export default function App() {
     }
   }, [activeQrSession]);
 
+  // 檢查所選日期今天是否已無任何可預約時段
+  const isTodayNoSlots = useMemo(() => {
+    const { date: todayStr } = getCurrentTW();
+    return selectedDate === todayStr && getFirstAvailablePracticeSlot(selectedDate) === null;
+  }, [selectedDate]);
+
+  // 切換日期時，自動調整為該日最早可預約時段
+  useEffect(() => {
+    const slot = getFirstAvailablePracticeSlot(selectedDate);
+    if (slot) {
+      setPracticeStart(slot.start);
+      setPracticeEnd(slot.end);
+      setPracticeError('');
+    } else {
+      setPracticeError('今日所有可預約加練時段皆已結束，請選擇明日或往後日期');
+    }
+  }, [selectedDate]);
+
   // 驗證 Drum Roll 加練時段
   useEffect(() => {
-    const err = validatePracticeTime(practiceStart, practiceEnd);
+    const err = validatePracticeTime(practiceStart, practiceEnd, selectedDate);
     setPracticeError(err || '');
-  }, [practiceStart, practiceEnd]);
+  }, [practiceStart, practiceEnd, selectedDate]);
 
   // ─── 預約動作 ─────────────────────────────────────────────────────────────
 
   const handleOpenBookingModal = () => {
-    const err = validatePracticeTime(practiceStart, practiceEnd);
+    const err = validatePracticeTime(practiceStart, practiceEnd, selectedDate);
     if (err) {
       setPracticeError(err);
       return;
@@ -587,6 +646,14 @@ export default function App() {
   const handleBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!bookingSlot || !formData.studentId.trim() || !formData.nickname.trim() || !formData.realName.trim()) {
+      return;
+    }
+
+    const err = validatePracticeTime(practiceStart, practiceEnd, bookingSlot.date);
+    if (err) {
+      setPracticeError(err);
+      alert(err);
+      setShowModal(false);
       return;
     }
 
@@ -658,13 +725,7 @@ export default function App() {
   };
 
   const handleCancelBooking = async (id: string) => {
-    setConfirmCancelId(id);
-  };
-
-  const confirmCancelBooking = async () => {
-    const id = confirmCancelId;
-    if (!id) return;
-    setConfirmCancelId(null);
+    if (!window.confirm('確定要取消或刪除此筆加練預約嗎？')) return;
 
     try {
       await fetch(`/api/bookings/${id}`, { method: 'DELETE' });
@@ -673,6 +734,7 @@ export default function App() {
     }
 
     setBookings((prev) => prev.filter((b) => b.id !== id));
+    setAdminBookings((prev) => prev.filter((b) => b.id !== id));
     setMyBookingIds((prev) => prev.filter((myId) => myId !== id));
 
     try {
@@ -2101,24 +2163,36 @@ export default function App() {
                 <h2 className="text-base font-black text-stone-800">2. 選擇加練時段 (滾輪選取)</h2>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 sm:gap-4 w-full">
-                <div className="space-y-1.5 min-w-0">
-                  <span className="text-xs font-bold text-stone-500">開始時間</span>
-                  <DrumRollPicker
-                    items={PRACTICE_TIMES}
-                    value={practiceStart}
-                    onChange={setPracticeStart}
-                  />
+              {isTodayNoSlots ? (
+                <div className="p-6 bg-stone-50 border border-stone-200 rounded-2xl text-center space-y-2">
+                  <div className="w-12 h-12 bg-amber-100 text-amber-800 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
+                    <Clock className="w-6 h-6" />
+                  </div>
+                  <p className="font-bold text-stone-800 text-sm">今日 ({selectedDate}) 加練預約時段已全數結束</p>
+                  <p className="text-xs text-stone-500">
+                    加練最晚需於 17:00 前開始以符合滿 2 小時規定。請點選上方其他日期（如明日）進行預約。
+                  </p>
                 </div>
-                <div className="space-y-1.5 min-w-0">
-                  <span className="text-xs font-bold text-stone-500">結束時間</span>
-                  <DrumRollPicker
-                    items={PRACTICE_TIMES}
-                    value={practiceEnd}
-                    onChange={setPracticeEnd}
-                  />
+              ) : (
+                <div className="grid grid-cols-2 gap-3 sm:gap-4 w-full">
+                  <div className="space-y-1.5 min-w-0">
+                    <span className="text-xs font-bold text-stone-500">開始時間</span>
+                    <DrumRollPicker
+                      items={PRACTICE_TIMES}
+                      value={practiceStart}
+                      onChange={setPracticeStart}
+                    />
+                  </div>
+                  <div className="space-y-1.5 min-w-0">
+                    <span className="text-xs font-bold text-stone-500">結束時間</span>
+                    <DrumRollPicker
+                      items={PRACTICE_TIMES}
+                      value={practiceEnd}
+                      onChange={setPracticeEnd}
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
 
               {practiceError && (
                 <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-start gap-2">
@@ -2129,11 +2203,13 @@ export default function App() {
 
               <button
                 type="button"
-                disabled={Boolean(practiceError)}
+                disabled={Boolean(practiceError) || isTodayNoSlots}
                 onClick={handleOpenBookingModal}
                 className="w-full py-3.5 rounded-2xl bg-amber-600 text-white font-bold text-sm hover:bg-amber-700 transition-all shadow-md shadow-amber-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                立即預約加練時段 ({practiceStart} - {practiceEnd})
+                {isTodayNoSlots
+                  ? '今日加練預約已截止，請選擇其他日期'
+                  : `立即預約加練時段 (${practiceStart} - ${practiceEnd})`}
               </button>
             </div>
           </div>
