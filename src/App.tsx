@@ -16,6 +16,7 @@ import {
   Search,
   Award,
   Sparkles,
+  ChevronLeft,
   ChevronRight,
   GraduationCap,
   Users,
@@ -2011,20 +2012,42 @@ export default function App() {
                 <Calendar className="w-5 h-5 text-amber-600" />
                 <h2 className="text-base font-black text-stone-800">1. 選擇加練日期</h2>
               </div>
-              <div className="flex overflow-x-auto gap-2 pb-1 w-full" style={{ scrollbarWidth: 'none' }}>
-                {dates.map((d) => (
-                  <button
-                    key={d.value}
-                    onClick={() => setSelectedDate(d.value)}
-                    className={`whitespace-nowrap px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all shrink-0 ${
-                      selectedDate === d.value
-                        ? 'bg-amber-600 text-white shadow-md shadow-amber-200'
-                        : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
-                    }`}
-                  >
-                    {d.display}
-                  </button>
-                ))}
+              <div className="relative flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    const el = document.getElementById('date-scroll');
+                    if (el) el.scrollBy({ left: -160, behavior: 'smooth' });
+                  }}
+                  className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full bg-stone-100 hover:bg-stone-200 text-stone-500 transition-all"
+                  aria-label="往前"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <div id="date-scroll" className="flex overflow-x-auto gap-2 pb-1 flex-1" style={{ scrollbarWidth: 'none' }}>
+                  {dates.map((d) => (
+                    <button
+                      key={d.value}
+                      onClick={() => setSelectedDate(d.value)}
+                      className={`whitespace-nowrap px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all shrink-0 ${
+                        selectedDate === d.value
+                          ? 'bg-amber-600 text-white shadow-md shadow-amber-200'
+                          : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                      }`}
+                    >
+                      {d.display}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => {
+                    const el = document.getElementById('date-scroll');
+                    if (el) el.scrollBy({ left: 160, behavior: 'smooth' });
+                  }}
+                  className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full bg-stone-100 hover:bg-stone-200 text-stone-500 transition-all"
+                  aria-label="往後"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
               </div>
             </div>
 
