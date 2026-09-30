@@ -383,7 +383,7 @@ export default function App() {
   const [isAdminAuth, setIsAdminAuth] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
   const [adminTab, setAdminTab] = useState<'overview' | 'members' | 'classes' | 'settings'>('overview');
-  const [adminOverviewScope, setAdminOverviewScope] = useState<'upcoming' | 'all'>('upcoming');
+  const [adminOverviewScope, setAdminOverviewScope] = useState<'today' | 'upcoming' | 'all'>('today');
   const [adminBookings, setAdminBookings] = useState<AdminBooking[]>([]);
   const [memberPins, setMemberPins] = useState<MemberPin[]>([]);
   const [newPinName, setNewPinName] = useState('');
@@ -1097,10 +1097,11 @@ export default function App() {
       return a.time.localeCompare(b.time);
     });
 
+    const todayList = sorted.filter((b) => b.date === todayStr);
     const upcoming = sorted.filter((b) => b.date >= todayStr);
     const past = sorted.filter((b) => b.date < todayStr).reverse(); // 歷史由新到舊
 
-    return { upcomingBookings: upcoming, pastBookings: past };
+    return { todayBookings: todayList, upcomingBookings: upcoming, pastBookings: past };
   }, [adminBookings, bookings, todayStr]);
 
   // 計算社員出席總名冊 (彙整全部預約、名冊與社課出席)
@@ -1396,17 +1397,34 @@ export default function App() {
               <div>
                 <h3 className="text-base font-black text-stone-800 flex items-center gap-2">
                   <Calendar className="w-5 h-5 text-amber-600" />
-                  {adminOverviewScope === 'upcoming' ? '今後加練預約總覽' : '全體加練歷史紀錄'}
+                  {adminOverviewScope === 'today'
+                    ? '今日加練名單總覽'
+                    : adminOverviewScope === 'upcoming'
+                    ? '今後加練預約總覽'
+                    : '全體加練歷史紀錄'}
                 </h3>
                 <p className="text-3xs text-stone-400 mt-0.5">
-                  {adminOverviewScope === 'upcoming'
+                  {adminOverviewScope === 'today'
+                    ? `顯示今日 (${todayStr}) 預約加練社員與指定時段`
+                    : adminOverviewScope === 'upcoming'
                     ? `僅顯示今日 (${todayStr}) 與未來之預約`
                     : '包含過去所有已完成或過期之加練紀錄'}
                 </p>
               </div>
 
               {/* 切換範圍按鈕 */}
-              <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200/60 text-xs font-bold self-start sm:self-auto">
+              <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200/60 text-xs font-bold self-start sm:self-auto gap-1">
+                <button
+                  type="button"
+                  onClick={() => setAdminOverviewScope('today')}
+                  className={`px-3 py-1.5 rounded-lg transition-all ${
+                    adminOverviewScope === 'today'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-stone-500 hover:text-stone-800'
+                  }`}
+                >
+                  今日加練 ({todayBookings.length})
+                </button>
                 <button
                   type="button"
                   onClick={() => setAdminOverviewScope('upcoming')}
@@ -1433,12 +1451,19 @@ export default function App() {
             </div>
 
             {(() => {
-              const displayList = adminOverviewScope === 'upcoming' ? upcomingBookings : pastBookings;
+              const displayList =
+                adminOverviewScope === 'today'
+                  ? todayBookings
+                  : adminOverviewScope === 'upcoming'
+                  ? upcomingBookings
+                  : pastBookings;
 
               if (displayList.length === 0) {
                 return (
                   <p className="text-xs text-stone-400 py-10 text-center">
-                    {adminOverviewScope === 'upcoming'
+                    {adminOverviewScope === 'today'
+                      ? `今日 (${todayStr}) 尚無加練預約人員`
+                      : adminOverviewScope === 'upcoming'
                       ? '目前尚無今日或今後的加練預約'
                       : '目前尚無歷史預約紀錄'}
                   </p>
@@ -2147,8 +2172,8 @@ export default function App() {
                           : 'bg-stone-50 border-stone-100'
                       }`}
                     >
-                      <div className="flex justify-between items-start">
-                        <div>
+                      <div className="flex justify-between items-center">
+                        <div className="space-y-1">
                           <p className="font-black text-stone-800 text-xs flex items-center gap-1.5">
                             {b.nickname}
                             {isMine && (
@@ -2157,7 +2182,14 @@ export default function App() {
                               </span>
                             )}
                           </p>
-                          <p className="text-3xs text-stone-500 font-mono mt-0.5">{b.time}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-amber-900 font-bold font-mono bg-white px-2 py-0.5 rounded-md border border-stone-200">
+                              ⏰ {b.time}
+                            </span>
+                            <span className="text-3xs text-stone-400 font-bold">
+                              ({calculateHours(b.time)} hr)
+                            </span>
+                          </div>
                         </div>
                         {isMine && (
                           <button
