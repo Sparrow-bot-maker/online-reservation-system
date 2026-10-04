@@ -76,6 +76,21 @@ function isSpecificTimeAllowed(mainTime: string, specificTime: string): boolean 
   return adjustedSS >= mS && adjustedSE <= mE;
 }
 
+/** 根據具體時間或時段判斷屬於上午或下午時段 */
+const MAX_PRACTICE_PER_PERIOD = 8;
+
+function getPracticePeriod(timeStr: string): 'morning' | 'afternoon' | null {
+  if (!timeStr) return null;
+  const clean = sanitizeTime(timeStr);
+  const parts = clean.split(/[~-]/);
+  if (!parts[0]) return null;
+  const [h, m] = parts[0].split(':').map(Number);
+  const s = (h || 0) * 60 + (m || 0);
+  if (s >= 9 * 60 && s < 12 * 60) return 'morning';
+  if (s >= 14 * 60 && s < 19 * 60) return 'afternoon';
+  return null;
+}
+
 /** 取得台灣今日日期字串 YYYY-MM-DD (UTC+8) */
 function getTodayTW(): string {
   const now = new Date();
@@ -206,6 +221,28 @@ app.post('/api/bookings', async (req, res) => {
     if (startMins <= currentTWMinutes) {
       res.status(400).json({ error: '預約開始時間已過，無法預約過去的時段' });
       return;
+    }
+  }
+
+  // 驗證上午/下午時段 8 人上限
+  const targetPeriod = getPracticePeriod(sanitizedSpecificTime) || getPracticePeriod(time);
+  if (targetPeriod) {
+    try {
+      const { rows: existingRows } = await sql`
+        SELECT time, specific_time FROM bookings WHERE date = ${date}
+      `;
+      const periodCount = existingRows.filter((r) => {
+        const p = getPracticePeriod(r.specific_time) || getPracticePeriod(r.time);
+        return p === targetPeriod;
+      }).length;
+
+      if (periodCount >= MAX_PRACTICE_PER_PERIOD) {
+        const periodName = targetPeriod === 'morning' ? '上午時段' : '下午時段';
+        res.status(400).json({ error: `${date} ${periodName}加練預約已達上限（最多 ${MAX_PRACTICE_PER_PERIOD} 人，目前已額滿）` });
+        return;
+      }
+    } catch (err) {
+      console.error('查詢既有預約數量失敗:', err);
     }
   }
 

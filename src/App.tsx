@@ -100,10 +100,24 @@ type MemberClassRecord = {
 
 const MIN_DURATION_MINS = 120; // 加練需滿 2 小時
 
+const MAX_PRACTICE_PER_PERIOD = 8; // 上午與下午各時段最多 8 人
+
 const PRACTICE_RANGES = [
-  { label: '上午時段 (09:00 - 12:00)', start: 9 * 60, end: 12 * 60 },
-  { label: '下午時段 (14:00 - 19:00)', start: 14 * 60, end: 19 * 60 },
+  { key: 'morning', label: '上午時段 (09:00 - 12:00)', start: 9 * 60, end: 12 * 60 },
+  { key: 'afternoon', label: '下午時段 (14:00 - 19:00)', start: 14 * 60, end: 19 * 60 },
 ];
+
+/** 根據時間範圍判斷屬於上午或下午時段 */
+const getPracticePeriod = (timeStr: string): 'morning' | 'afternoon' | null => {
+  if (!timeStr) return null;
+  const clean = sanitizeTime(timeStr);
+  const parts = clean.split(/[~-]/);
+  if (!parts[0]) return null;
+  const s = timeToMins(parts[0]);
+  if (s >= 9 * 60 && s < 12 * 60) return 'morning';
+  if (s >= 14 * 60 && s < 19 * 60) return 'afternoon';
+  return null;
+};
 
 // Drum Roll 可選刻度（09:00-12:00 / 14:00-19:00，每 15 分鐘）
 const PRACTICE_TIMES = (() => {
@@ -229,7 +243,12 @@ const getFirstAvailablePracticeSlot = (date: string): { start: string; end: stri
   return null;
 };
 
-const validatePracticeTime = (start: string, end: string, date?: string): string | null => {
+const validatePracticeTime = (
+  start: string,
+  end: string,
+  date?: string,
+  currentBookings: Booking[] = []
+): string | null => {
   const s = timeToMins(start);
   const e = timeToMins(end);
 
@@ -250,16 +269,33 @@ const validatePracticeTime = (start: string, end: string, date?: string): string
     const diff = e - s;
     return `加練時長需至少滿 2 小時（目前為 ${Math.floor(diff / 60)} 小時 ${diff % 60 ? `${diff % 60} 分鐘` : ''}）`;
   }
+  let matchedRange = null;
   for (const range of PRACTICE_RANGES) {
     if (s >= range.start && s < range.end) {
       if (e > range.end) {
         const endStr = `${String(Math.floor(range.end / 60)).padStart(2, '0')}:00`;
         return `此時段之加練需在 ${endStr} 前結束（不可跨越午休或閉館時段）`;
       }
-      return null;
+      matchedRange = range;
+      break;
     }
   }
-  return '開始時間必須在 09:00–12:00 或 14:00–19:00 規定時段內';
+  if (!matchedRange) {
+    return '開始時間必須在 09:00–12:00 或 14:00–19:00 規定時段內';
+  }
+
+  // 檢查該時段人數上限 (最多 8 人)
+  if (date) {
+    const periodBookings = currentBookings.filter(
+      (b) => b.date === date && getPracticePeriod(b.time) === matchedRange.key
+    );
+    if (periodBookings.length >= MAX_PRACTICE_PER_PERIOD) {
+      const periodName = matchedRange.key === 'morning' ? '上午時段' : '下午時段';
+      return `${date} ${periodName}加練預約已達上限（最多 ${MAX_PRACTICE_PER_PERIOD} 人，目前已額滿）`;
+    }
+  }
+
+  return null;
 };
 
 // ─── DrumRollPicker Component ────────────────────────────────────────────────
@@ -633,14 +669,14 @@ export default function App() {
 
   // 驗證 Drum Roll 加練時段
   useEffect(() => {
-    const err = validatePracticeTime(practiceStart, practiceEnd, selectedDate);
+    const err = validatePracticeTime(practiceStart, practiceEnd, selectedDate, bookings);
     setPracticeError(err || '');
-  }, [practiceStart, practiceEnd, selectedDate]);
+  }, [practiceStart, practiceEnd, selectedDate, bookings]);
 
   // ─── 預約動作 ─────────────────────────────────────────────────────────────
 
   const handleOpenBookingModal = () => {
-    const err = validatePracticeTime(practiceStart, practiceEnd, selectedDate);
+    const err = validatePracticeTime(practiceStart, practiceEnd, selectedDate, bookings);
     if (err) {
       setPracticeError(err);
       return;
@@ -658,7 +694,7 @@ export default function App() {
       return;
     }
 
-    const err = validatePracticeTime(practiceStart, practiceEnd, bookingSlot.date);
+    const err = validatePracticeTime(practiceStart, practiceEnd, bookingSlot.date, bookings);
     if (err) {
       setPracticeError(err);
       alert(err);
@@ -2455,6 +2491,35 @@ export default function App() {
               <p className="text-3xs text-stone-400 mt-0.5">
                 共 {bookings.filter((b) => b.date === selectedDate).length} 人預約
               </p>
+              {(() => {
+                const dateBookings = bookings.filter((b) => b.date === selectedDate);
+                const morningCount = dateBookings.filter((b) => getPracticePeriod(b.time) === 'morning').length;
+                const afternoonCount = dateBookings.filter((b) => getPracticePeriod(b.time) === 'afternoon').length;
+                return (
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
+                    <span
+                      className={`text-3xs font-bold px-2 py-0.5 rounded-full border ${
+                        morningCount >= MAX_PRACTICE_PER_PERIOD
+                          ? 'bg-rose-50 text-rose-700 border-rose-200'
+                          : 'bg-amber-50 text-amber-800 border-amber-200'
+                      }`}
+                    >
+                      上午：{morningCount}/{MAX_PRACTICE_PER_PERIOD} 人
+                      {morningCount >= MAX_PRACTICE_PER_PERIOD ? ' (已額滿)' : ''}
+                    </span>
+                    <span
+                      className={`text-3xs font-bold px-2 py-0.5 rounded-full border ${
+                        afternoonCount >= MAX_PRACTICE_PER_PERIOD
+                          ? 'bg-rose-50 text-rose-700 border-rose-200'
+                          : 'bg-amber-50 text-amber-800 border-amber-200'
+                      }`}
+                    >
+                      下午：{afternoonCount}/{MAX_PRACTICE_PER_PERIOD} 人
+                      {afternoonCount >= MAX_PRACTICE_PER_PERIOD ? ' (已額滿)' : ''}
+                    </span>
+                  </div>
+                );
+              })()}
             </div>
             {selectedDate === todayStr && (
               <button
@@ -2506,6 +2571,16 @@ export default function App() {
                             <span className="text-xs text-amber-900 font-bold font-mono bg-white px-2 py-0.5 rounded-md border border-stone-200">
                               ⏰ {b.time}
                             </span>
+                            {getPracticePeriod(b.time) === 'morning' && (
+                              <span className="text-3xs font-bold text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded-md border border-sky-200">
+                                上午
+                              </span>
+                            )}
+                            {getPracticePeriod(b.time) === 'afternoon' && (
+                              <span className="text-3xs font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-md border border-amber-200">
+                                下午
+                              </span>
+                            )}
                             <span className="text-3xs text-stone-400 font-bold">
                               ({calculateHours(b.time)} hr)
                             </span>
