@@ -102,10 +102,20 @@ const MIN_DURATION_MINS = 120; // 加練需滿 2 小時
 
 const MAX_PRACTICE_PER_PERIOD = 8; // 上午與下午各時段最多 8 人
 
-const PRACTICE_RANGES = [
-  { key: 'morning', label: '上午時段 (09:00 - 12:00)', start: 9 * 60, end: 12 * 60 },
-  { key: 'afternoon', label: '下午時段 (14:00 - 19:00)', start: 14 * 60, end: 19 * 60 },
-];
+// 自此日期（含）起，下午加練最晚結束時間由 19:00 改為 18:00
+const AFTERNOON_END_CHANGE_DATE = '2026-10-08';
+
+const getAfternoonEnd = (date?: string): number =>
+  date && date >= AFTERNOON_END_CHANGE_DATE ? 18 * 60 : 19 * 60;
+
+const getPracticeRanges = (date?: string) => {
+  const afternoonEnd = getAfternoonEnd(date);
+  const endLabel = `${String(afternoonEnd / 60).padStart(2, '0')}:00`;
+  return [
+    { key: 'morning', label: '上午時段 (09:00 - 12:00)', start: 9 * 60, end: 12 * 60 },
+    { key: 'afternoon', label: `下午時段 (14:00 - ${endLabel})`, start: 14 * 60, end: afternoonEnd },
+  ];
+};
 
 /** 根據時間範圍判斷屬於上午或下午時段 */
 const getPracticePeriod = (timeStr: string): 'morning' | 'afternoon' | null => {
@@ -119,8 +129,8 @@ const getPracticePeriod = (timeStr: string): 'morning' | 'afternoon' | null => {
   return null;
 };
 
-// Drum Roll 可選刻度（09:00-12:00 / 14:00-19:00，每 15 分鐘）
-const PRACTICE_TIMES = (() => {
+// Drum Roll 可選刻度（09:00-12:00 / 14:00-19:00 或 18:00，每 15 分鐘）
+const getPracticeTimes = (date?: string): string[] => {
   const times: string[] = [];
   const addRange = (startH: number, endH: number) => {
     for (let h = startH; h <= endH; h++) {
@@ -131,9 +141,9 @@ const PRACTICE_TIMES = (() => {
     }
   };
   addRange(9, 12);
-  addRange(14, 19);
+  addRange(14, getAfternoonEnd(date) / 60);
   return times;
-})();
+};
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
@@ -151,15 +161,6 @@ const getTodayTW = (): string => {
   const now = new Date();
   const tw = new Date(now.getTime() + 8 * 60 * 60 * 1000);
   return tw.toISOString().split('T')[0];
-};
-
-const getCurrentTW = (): { date: string; minutes: number } => {
-  const now = new Date();
-  const tw = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  return {
-    date: tw.toISOString().split('T')[0],
-    minutes: tw.getUTCHours() * 60 + tw.getUTCMinutes(),
-  };
 };
 
 const generateDates = () => {
@@ -225,19 +226,17 @@ const getRiderTitle = (hours: number) => {
   return { title: '榮譽馬術大師 👑', color: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-200' };
 };
 
-/** 取得特定日期最早可用的預約時段（滿 2 小時） */
+/** 取得特定日期最早可用的預約時段（滿 2 小時）；當日與過去日期不開放新增 */
 const getFirstAvailablePracticeSlot = (date: string): { start: string; end: string } | null => {
-  const { date: todayStr, minutes: currentMinutes } = getCurrentTW();
-  const isToday = date === todayStr;
+  if (date <= getTodayTW()) return null;
 
-  for (const range of PRACTICE_RANGES) {
-    for (let s = range.start; s <= range.end - MIN_DURATION_MINS; s += 15) {
-      if (!isToday || s > currentMinutes) {
-        const e = s + MIN_DURATION_MINS;
-        const startStr = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-        const endStr = `${String(Math.floor(e / 60)).padStart(2, '0')}:${String(e % 60).padStart(2, '0')}`;
-        return { start: startStr, end: endStr };
-      }
+  for (const range of getPracticeRanges(date)) {
+    const s = range.start;
+    if (s <= range.end - MIN_DURATION_MINS) {
+      const e = s + MIN_DURATION_MINS;
+      const startStr = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+      const endStr = `${String(Math.floor(e / 60)).padStart(2, '0')}:${String(e % 60).padStart(2, '0')}`;
+      return { start: startStr, end: endStr };
     }
   }
   return null;
@@ -251,16 +250,15 @@ const validatePracticeTime = (
 ): string | null => {
   const s = timeToMins(start);
   const e = timeToMins(end);
+  const ranges = getPracticeRanges(date);
 
   if (date) {
-    const { date: todayStr, minutes: currentMinutes } = getCurrentTW();
+    const todayStr = getTodayTW();
     if (date < todayStr) {
       return '無法預約過去的日期';
     }
     if (date === todayStr) {
-      if (s <= currentMinutes) {
-        return `預約開始時間已過（${start} 已過），無法預約過去的時段`;
-      }
+      return '當日不開放新增加練預約（當日僅可取消），請選擇明日或之後的日期';
     }
   }
 
@@ -270,7 +268,7 @@ const validatePracticeTime = (
     return `加練時長需至少滿 2 小時（目前為 ${Math.floor(diff / 60)} 小時 ${diff % 60 ? `${diff % 60} 分鐘` : ''}）`;
   }
   let matchedRange = null;
-  for (const range of PRACTICE_RANGES) {
+  for (const range of ranges) {
     if (s >= range.start && s < range.end) {
       if (e > range.end) {
         const endStr = `${String(Math.floor(range.end / 60)).padStart(2, '0')}:00`;
@@ -281,7 +279,8 @@ const validatePracticeTime = (
     }
   }
   if (!matchedRange) {
-    return '開始時間必須在 09:00–12:00 或 14:00–19:00 規定時段內';
+    const pmEnd = `${String(getAfternoonEnd(date) / 60).padStart(2, '0')}:00`;
+    return `開始時間必須在 09:00–12:00 或 14:00–${pmEnd} 規定時段內`;
   }
 
   // 檢查該時段人數上限 (最多 8 人)
@@ -649,11 +648,11 @@ export default function App() {
     }
   }, [activeQrSession]);
 
-  // 檢查所選日期今天是否已無任何可預約時段
-  const isTodayNoSlots = useMemo(() => {
-    const { date: todayStr } = getCurrentTW();
-    return selectedDate === todayStr && getFirstAvailablePracticeSlot(selectedDate) === null;
-  }, [selectedDate]);
+  // 當日（含過去）不開放新增加練，僅可取消
+  const isTodayNoSlots = useMemo(() => selectedDate <= getTodayTW(), [selectedDate]);
+
+  // 依所選日期產生 Drum Roll 刻度（10/8 起下午最晚 18:00）
+  const practiceTimes = useMemo(() => getPracticeTimes(selectedDate), [selectedDate]);
 
   // 切換日期時，自動調整為該日最早可預約時段
   useEffect(() => {
@@ -663,7 +662,7 @@ export default function App() {
       setPracticeEnd(slot.end);
       setPracticeError('');
     } else {
-      setPracticeError('今日所有可預約加練時段皆已結束，請選擇明日或往後日期');
+      setPracticeError('當日不開放新增加練預約（當日僅可取消），請選擇明日或之後的日期');
     }
   }, [selectedDate]);
 
@@ -729,6 +728,13 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.id) newBooking.id = data.id;
+      } else if (res.status === 400) {
+        const data = await res.json().catch(() => ({}));
+        const msg = data.error || '預約失敗';
+        setPracticeError(msg);
+        alert(msg);
+        setShowModal(false);
+        return;
       }
     } catch {
       // 離線降級
@@ -2429,9 +2435,9 @@ export default function App() {
                   <div className="w-12 h-12 bg-amber-100 text-amber-800 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
                     <Clock className="w-6 h-6" />
                   </div>
-                  <p className="font-bold text-stone-800 text-sm">今日 ({selectedDate}) 加練預約時段已全數結束</p>
+                  <p className="font-bold text-stone-800 text-sm">今日 ({selectedDate}) 不開放新增加練預約</p>
                   <p className="text-xs text-stone-500">
-                    加練最晚需於 17:00 前開始以符合滿 2 小時規定。請點選上方其他日期（如明日）進行預約。
+                    加練需於前一日（含）之前預約，當日僅可取消。請點選上方其他日期（如明日）進行預約。
                   </p>
                 </div>
               ) : (
@@ -2439,7 +2445,7 @@ export default function App() {
                   <div className="space-y-1.5 min-w-0">
                     <span className="text-xs font-bold text-stone-500">開始時間</span>
                     <DrumRollPicker
-                      items={PRACTICE_TIMES}
+                      items={practiceTimes}
                       value={practiceStart}
                       onChange={setPracticeStart}
                     />
@@ -2447,7 +2453,7 @@ export default function App() {
                   <div className="space-y-1.5 min-w-0">
                     <span className="text-xs font-bold text-stone-500">結束時間</span>
                     <DrumRollPicker
-                      items={PRACTICE_TIMES}
+                      items={practiceTimes}
                       value={practiceEnd}
                       onChange={setPracticeEnd}
                     />
@@ -2469,7 +2475,7 @@ export default function App() {
                 className="w-full py-3.5 rounded-2xl bg-amber-600 text-white font-bold text-sm hover:bg-amber-700 transition-all shadow-md shadow-amber-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isTodayNoSlots
-                  ? '今日加練預約已截止，請選擇其他日期'
+                  ? '當日不開放新增，請選擇明日或之後的日期'
                   : `立即預約加練時段 (${practiceStart} - ${practiceEnd})`}
               </button>
             </div>

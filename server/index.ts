@@ -91,6 +91,12 @@ function getPracticePeriod(timeStr: string): 'morning' | 'afternoon' | null {
   return null;
 }
 
+/** 自此日期（含）起，下午加練最晚結束時間由 19:00 改為 18:00 */
+const AFTERNOON_END_CHANGE_DATE = '2026-10-08';
+function getAfternoonEnd(date: string): number {
+  return date >= AFTERNOON_END_CHANGE_DATE ? 18 * 60 : 19 * 60;
+}
+
 /** 取得台灣今日日期字串 YYYY-MM-DD (UTC+8) */
 function getTodayTW(): string {
   const now = new Date();
@@ -201,7 +207,7 @@ app.post('/api/bookings', async (req, res) => {
     return;
   }
 
-  // 驗證預約日期與時間不可為過去（台灣時間 UTC+8）
+  // 驗證預約日期不可為過去或當日（台灣時間 UTC+8）：當日僅可取消，新增需為明日之後
   const todayStr = getTodayTW();
   if (date < todayStr) {
     res.status(400).json({ error: '無法預約過去的日期' });
@@ -209,17 +215,22 @@ app.post('/api/bookings', async (req, res) => {
   }
 
   if (date === todayStr) {
-    const cleanTime = sanitizeTime(specificTime || time);
-    const [sStart] = cleanTime.split('~');
-    const [h, m] = (sStart || '').split(':').map(Number);
-    const startMins = (h || 0) * 60 + (m || 0);
+    res.status(400).json({ error: '當日不開放新增加練預約（當日僅可取消），請選擇明日或之後的日期' });
+    return;
+  }
 
-    const now = new Date();
-    const tw = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-    const currentTWMinutes = tw.getUTCHours() * 60 + tw.getUTCMinutes();
-
-    if (startMins <= currentTWMinutes) {
-      res.status(400).json({ error: '預約開始時間已過，無法預約過去的時段' });
+  // 驗證下午時段最晚結束時間（2026-10-08 起改為 18:00）
+  if (!isFixedMorning) {
+    const [sStart, sEnd] = sanitizedSpecificTime.split('~');
+    const toMins = (t?: string) => {
+      const [h, m] = (t || '').split(':').map(Number);
+      return (h || 0) * 60 + (m || 0);
+    };
+    const startMins = toMins(sStart);
+    const endMins = toMins(sEnd);
+    const afternoonEnd = getAfternoonEnd(date);
+    if (startMins >= 14 * 60 && endMins > afternoonEnd) {
+      res.status(400).json({ error: `下午時段加練需在 ${afternoonEnd / 60}:00 前結束` });
       return;
     }
   }
