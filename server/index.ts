@@ -228,6 +228,10 @@ app.post('/api/bookings', async (req, res) => {
     };
     const startMins = toMins(sStart);
     const endMins = toMins(sEnd);
+    if (startMins % 30 !== 0 || endMins % 30 !== 0) {
+      res.status(400).json({ error: '預約時間必須以 30 分鐘為間隔（例如整點或半點）' });
+      return;
+    }
     const afternoonEnd = getAfternoonEnd(date);
     if (startMins >= 14 * 60 && endMins > afternoonEnd) {
       res.status(400).json({ error: `下午時段加練需在 ${afternoonEnd / 60}:00 前結束` });

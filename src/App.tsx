@@ -129,12 +129,14 @@ const getPracticePeriod = (timeStr: string): 'morning' | 'afternoon' | null => {
   return null;
 };
 
-// Drum Roll 可選刻度（09:00-12:00 / 14:00-19:00 或 18:00，每 15 分鐘）
+const TIME_INTERVAL_MINS = 30; // 預約時間間隔 30 分鐘
+
+// Drum Roll 可選刻度（09:00-12:00 / 14:00-19:00 或 18:00，每 30 分鐘）
 const getPracticeTimes = (date?: string): string[] => {
   const times: string[] = [];
   const addRange = (startH: number, endH: number) => {
     for (let h = startH; h <= endH; h++) {
-      for (let m = 0; m < 60; m += 15) {
+      for (let m = 0; m < 60; m += TIME_INTERVAL_MINS) {
         if (h === endH && m > 0) break;
         times.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
       }
@@ -263,6 +265,9 @@ const validatePracticeTime = (
   }
 
   if (e <= s) return '結束時間必須晚於開始時間';
+  if (s % TIME_INTERVAL_MINS !== 0 || e % TIME_INTERVAL_MINS !== 0) {
+    return '預約時間必須以 30 分鐘為間隔（例如整點或半點）';
+  }
   if (e - s < MIN_DURATION_MINS) {
     const diff = e - s;
     return `加練時長需至少滿 2 小時（目前為 ${Math.floor(diff / 60)} 小時 ${diff % 60 ? `${diff % 60} 分鐘` : ''}）`;
