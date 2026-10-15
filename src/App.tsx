@@ -81,7 +81,7 @@ const pinFormatError = (raw: string): string | null => {
   const pin = normalizePin(raw);
   if (!pin) return '請輸入學號';
   if (!PIN_REGEX.test(pin)) {
-    return '學號格式錯誤：需為英文字母與數字的組合（例如 S15610214），4–20 字元，不可含空白或符號';
+    return '學號格式錯誤：需為英文字母與數字的組合（例如 S12345678），4–20 字元，不可含空白或符號';
   }
   return null;
 };
@@ -2378,7 +2378,7 @@ export default function App() {
                 value={memberPinInput}
                 onChange={(e) => setMemberPinInput(e.target.value)}
                 className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none transition-all text-xs"
-                placeholder="請輸入學號或真實姓名 (例: S15610214 或 何德利)"
+                placeholder="請輸入學號或真實姓名 (例: S12345678 或 王小明)"
               />
               <button
                 type="submit"
@@ -2400,7 +2400,7 @@ export default function App() {
                   required
                   value={registerRealNameInput}
                   onChange={(e) => setRegisterRealNameInput(e.target.value)}
-                  placeholder="請輸入本名"
+                  placeholder="請輸入本名 (例: 王小明)"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none text-xs"
                 />
               </div>
@@ -2411,7 +2411,7 @@ export default function App() {
                   required
                   value={registerStudentIdInput}
                   onChange={(e) => setRegisterStudentIdInput(e.target.value.toUpperCase())}
-                  placeholder="例: S15610214"
+                  placeholder="例: S12345678"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none text-xs font-mono"
                 />
               </div>
@@ -2907,7 +2907,7 @@ export default function App() {
 
               <div className="space-y-1">
                 <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">
-                  個人學號 (PIN) * <span className="text-3xs text-stone-400 font-normal lowercase">(需英數組合，例: S15610214)</span>
+                  個人學號 (PIN) * <span className="text-3xs text-stone-400 font-normal lowercase">(需英數組合，例: S12345678)</span>
                 </label>
                 <input
                   type="text"

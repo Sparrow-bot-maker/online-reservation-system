@@ -162,7 +162,7 @@ function normalizeName(raw: unknown): string {
 function pinFormatError(pin: string): string | null {
   if (!pin) return '請輸入學號';
   if (!PIN_REGEX.test(pin)) {
-    return '學號格式錯誤：需為英文字母與數字的組合（例如 S15610214），4–20 字元，不可含空白或符號';
+    return '學號格式錯誤：需為英文字母與數字的組合（例如 S12345678），4–20 字元，不可含空白或符號';
   }
   return null;
 }
