@@ -32,6 +32,7 @@ import {
   ArrowLeft,
   ExternalLink,
   History,
+  Pencil,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -71,6 +72,18 @@ type MemberPin = {
   realName: string;
   pin: string;
   createdAt?: string;
+};
+
+/** 學號格式：英文字母 + 數字組合（兩者皆至少一個），4~20 字元；與後端 PIN_REGEX 一致 */
+const PIN_REGEX = /^(?=.*[A-Z])(?=.*\d)[A-Z0-9]{4,20}$/;
+const normalizePin = (raw: string) => raw.trim().toUpperCase();
+const pinFormatError = (raw: string): string | null => {
+  const pin = normalizePin(raw);
+  if (!pin) return '請輸入學號';
+  if (!PIN_REGEX.test(pin)) {
+    return '學號格式錯誤：需為英文字母與數字的組合（例如 S15610214），4–20 字元，不可含空白或符號';
+  }
+  return null;
 };
 
 type ClassSession = {
@@ -471,6 +484,11 @@ export default function App() {
   const [newPinCode, setNewPinCode] = useState('');
   const [pinSubmitting, setPinSubmitting] = useState(false);
   const [confirmDeletePin, setConfirmDeletePin] = useState<string | null>(null);
+  const [editingPinName, setEditingPinName] = useState<string | null>(null); // 正在編輯的原始本名
+  const [editPinName, setEditPinName] = useState('');
+  const [editPinCode, setEditPinCode] = useState('');
+  const [editPinSaving, setEditPinSaving] = useState(false);
+  const [deletingMember, setDeletingMember] = useState(false);
   const [checkinPwdDisplay, setCheckinPwdDisplay] = useState('88321');
   const [newCheckinPwd, setNewCheckinPwd] = useState('');
   const [checkinPwdSubmitting, setCheckinPwdSubmitting] = useState(false);
@@ -698,6 +716,12 @@ export default function App() {
       return;
     }
 
+    const studentIdErr = pinFormatError(formData.studentId);
+    if (studentIdErr) {
+      alert(studentIdErr);
+      return;
+    }
+
     const err = validatePracticeTime(practiceStart, practiceEnd, bookingSlot.date, bookings);
     if (err) {
       setPracticeError(err);
@@ -712,7 +736,7 @@ export default function App() {
       time: bookingSlot.time,
       nickname: formData.nickname.trim(),
       realName: formData.realName.trim(),
-      studentId: formData.studentId.trim(),
+      studentId: normalizePin(formData.studentId),
       createdAt: new Date().toISOString(),
       attendance_status: 'pending',
     };
@@ -727,12 +751,14 @@ export default function App() {
           time: newBooking.time,
           nickname: newBooking.nickname,
           realName: newBooking.realName,
+          studentId: newBooking.studentId,
           specificTime: sanitizeTime(newBooking.time),
         }),
       });
       if (res.ok) {
         const data = await res.json();
         if (data.id) newBooking.id = data.id;
+        if (data.realName) newBooking.realName = data.realName;
       } else if (res.status === 400) {
         const data = await res.json().catch(() => ({}));
         const msg = data.error || '預約失敗';
@@ -1016,39 +1042,104 @@ export default function App() {
   const handleAddPin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPinName.trim() || !newPinCode.trim()) return;
+    const pinErr = pinFormatError(newPinCode);
+    if (pinErr) {
+      alert(pinErr);
+      return;
+    }
     setPinSubmitting(true);
     try {
       const res = await fetch('/api/admin/member-pins', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
-        body: JSON.stringify({ realName: newPinName.trim(), pin: newPinCode.trim() }),
+        body: JSON.stringify({ realName: newPinName.trim(), pin: normalizePin(newPinCode) }),
       });
       if (res.ok) {
         setNewPinName('');
         setNewPinCode('');
         fetchAdminData(adminPassword);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || '新增失敗');
       }
     } catch {
-      // Local fallback
-      setMemberPins((prev) => [
-        ...prev.filter((p) => p.realName !== newPinName.trim()),
-        { realName: newPinName.trim(), pin: newPinCode.trim(), createdAt: new Date().toISOString() },
-      ]);
-      setNewPinName('');
-      setNewPinCode('');
+      alert('網路錯誤，請稍後再試');
     } finally {
       setPinSubmitting(false);
     }
   };
 
+  const startEditPin = (m: MemberPin) => {
+    setEditingPinName(m.realName);
+    setEditPinName(m.realName);
+    setEditPinCode(m.pin);
+    setConfirmDeletePin(null);
+  };
+
+  const cancelEditPin = () => {
+    setEditingPinName(null);
+    setEditPinName('');
+    setEditPinCode('');
+  };
+
+  const handleSaveEditPin = async () => {
+    if (!editingPinName) return;
+    const name = editPinName.trim();
+    const pin = normalizePin(editPinCode);
+    if (!name) {
+      alert('請輸入本名');
+      return;
+    }
+    const pinErr = pinFormatError(pin);
+    if (pinErr) {
+      alert(pinErr);
+      return;
+    }
+    const original = memberPins.find((p) => p.realName === editingPinName);
+    if (original && original.realName === name && normalizePin(original.pin) === pin) {
+      cancelEditPin();
+      return;
+    }
+    if (name !== editingPinName && !window.confirm(`將「${editingPinName}」改名為「${name}」，其所有加練與社課紀錄也會一併轉移，確定？`)) {
+      return;
+    }
+
+    setEditPinSaving(true);
+    try {
+      const res = await fetch(`/api/admin/member-pins/${encodeURIComponent(editingPinName)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
+        body: JSON.stringify({ realName: name, pin }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || '更新失敗');
+        return;
+      }
+      if (selectedMember === editingPinName) setSelectedMember(name);
+      cancelEditPin();
+      fetchAdminData(adminPassword);
+    } catch {
+      alert('網路錯誤，請稍後再試');
+    } finally {
+      setEditPinSaving(false);
+    }
+  };
+
   const handleDeletePin = async (realName: string) => {
     try {
-      await fetch(`/api/admin/member-pins/${encodeURIComponent(realName)}`, {
+      const res = await fetch(`/api/admin/member-pins/${encodeURIComponent(realName)}`, {
         method: 'DELETE',
         headers: { 'x-admin-password': adminPassword },
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || '刪除失敗');
+        return;
+      }
     } catch {
-      // ignore
+      alert('網路錯誤，請稍後再試');
+      return;
     }
     setMemberPins((prev) => prev.filter((m) => m.realName !== realName));
     setConfirmDeletePin(null);
@@ -1115,17 +1206,32 @@ export default function App() {
   };
 
   const deleteAdminMember = async (realName: string) => {
+    setDeletingMember(true);
     try {
-      await fetch(`/api/admin/members/${encodeURIComponent(realName)}`, {
+      const res = await fetch(`/api/admin/members/${encodeURIComponent(realName)}`, {
         method: 'DELETE',
         headers: { 'x-admin-password': adminPassword },
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || '刪除失敗，請稍後再試');
+        return;
+      }
     } catch {
-      // ignore
+      alert('網路錯誤，刪除未完成');
+      return;
+    } finally {
+      setDeletingMember(false);
     }
-    setAdminBookings((prev) => prev.filter((b) => b.realName !== realName));
+    // 成員名單由 memberPins + adminBookings + classSessions 三方彙整，三者都要清掉
+    setAdminBookings((prev) => prev.filter((b) => (b.realName || b.nickname) !== realName));
+    setMemberPins((prev) => prev.filter((p) => p.realName !== realName));
+    setClassSessions((prev) =>
+      prev.map((s) => ({ ...s, attendees: (s.attendees ?? []).filter((a) => (a.realName || a.nickname) !== realName) }))
+    );
     setSelectedMember(null);
     setConfirmDeleteMember(false);
+    fetchAdminData(adminPassword);
   };
 
   // ─── 社課現場點名簽到動作 (學生) ──────────────────────────────────────────
@@ -1183,125 +1289,106 @@ export default function App() {
   const handleRegisterMember = async (e: React.FormEvent) => {
     e.preventDefault();
     const name = registerRealNameInput.trim();
-    const pin = registerStudentIdInput.trim();
-    if (!name || !pin) {
-      setRegisterMessage({ type: 'error', text: '請輸入姓名與學號' });
+    const pin = normalizePin(registerStudentIdInput);
+    if (!name) {
+      setRegisterMessage({ type: 'error', text: '請輸入真實姓名' });
+      return;
+    }
+    const pinErr = pinFormatError(pin);
+    if (pinErr) {
+      setRegisterMessage({ type: 'error', text: pinErr });
       return;
     }
 
     setRegisterLoading(true);
     setRegisterMessage(null);
 
-    // 1. 同步送往後端登記
     try {
-      await fetch('/api/member/register', {
+      const res = await fetch('/api/member/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ realName: name, pin: pin }),
+        body: JSON.stringify({ realName: name, pin }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRegisterMessage({ type: 'error', text: data.error || '登記失敗，請稍後再試' });
+        return;
+      }
+
+      const savedName: string = data.realName || name;
+      const savedPin: string = data.pin || pin;
+      try {
+        localStorage.setItem('app_my_student_id', savedPin);
+        localStorage.setItem('app_my_real_name', savedName);
+      } catch {
+        // ignore
+      }
+      setMemberPinInput(savedPin);
+      setRegisterStudentIdInput(savedPin);
+      setRegisterMessage({
+        type: 'success',
+        text: data.alreadyRegistered
+          ? `您已登記過「${savedName} (${savedPin})」，以下為您的紀錄。`
+          : `登記成功！已為您綁定「${savedName} (${savedPin})」，今後輸入學號或姓名即可查詢。`,
+      });
+      await handleQueryMemberStats(savedPin);
     } catch {
-      // ignore
+      setRegisterMessage({ type: 'error', text: '網路錯誤，登記未完成，請稍後再試' });
+    } finally {
+      setRegisterLoading(false);
     }
-
-    // 2. 更新本地 memberPins 與 localStorage 讓後台和後續查詢立刻生效
-    setMemberPins((prev) => {
-      const filtered = prev.filter((p) => p.pin !== pin && p.realName !== name);
-      return [...filtered, { realName: name, pin: pin, createdAt: new Date().toISOString() }];
-    });
-
-    try {
-      localStorage.setItem('app_my_student_id', pin);
-      localStorage.setItem('app_my_real_name', name);
-    } catch {
-      // ignore
-    }
-
-    setMemberPinInput(pin);
-    setRegisterLoading(false);
-    setRegisterMessage({ type: 'success', text: `登記成功！已為您綁定「${name} (${pin})」，今後只需輸入學號即可查詢。` });
-
-    // 自動執行查詢顯示紀錄
-    handleQueryMemberStats(pin);
   };
 
-  const handleQueryMemberStats = async (pinToQuery: string) => {
-    const pin = pinToQuery.trim();
-    if (!pin) return;
+  const clearMemberResult = () => {
+    setSubmittedMemberPin('');
+    setMemberRealName('');
+    setMemberRecords([]);
+    setMemberClassRecords([]);
+  };
+
+  /** 以學號或本名查詢；只有名冊中存在的社員才會顯示結果 */
+  const handleQueryMemberStats = async (rawQuery: string) => {
+    const query = rawQuery.trim();
+    if (!query) return;
     setMemberLoading(true);
 
     try {
-      // 嘗試從後端 API 取得
+      const qs = `?q=${encodeURIComponent(query)}`;
       const [statsRes, classRes] = await Promise.all([
-        fetch('/api/member/stats', { headers: { 'x-member-pin': pin } }),
-        fetch('/api/member/class-stats', { headers: { 'x-member-pin': pin } }),
+        fetch(`/api/member/stats${qs}`),
+        fetch(`/api/member/class-stats${qs}`),
       ]);
 
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setMemberRealName(statsData.realName || '');
-        setMemberRecords(statsData.records || []);
-      } else {
-        // 本地降級配對
-        queryMemberStatsLocally(pin);
+      if (!statsRes.ok) {
+        const data = await statsRes.json().catch(() => ({}));
+        clearMemberResult();
+        setRegisterMessage({ type: 'error', text: data.error || '查無此學號或姓名' });
+        return;
       }
+
+      const statsData = await statsRes.json();
+      setMemberRealName(statsData.realName || '');
+      setMemberRecords(statsData.records || []);
+      setSubmittedMemberPin(statsData.pin || query);
 
       if (classRes.ok) {
         const classData = await classRes.json();
         setMemberClassRecords(classData.records || []);
+      } else {
+        setMemberClassRecords([]);
       }
     } catch {
-      // 本地降級計算
-      queryMemberStatsLocally(pin);
+      clearMemberResult();
+      setRegisterMessage({ type: 'error', text: '網路錯誤，無法查詢紀錄，請稍後再試' });
     } finally {
-      setSubmittedMemberPin(pin);
       setMemberLoading(false);
     }
-  };
-
-  const queryMemberStatsLocally = (pin: string) => {
-    // 找出所有加練紀錄中學號相符者
-    let allStoredBookings: Booking[] = [];
-    try {
-      const saved = localStorage.getItem('app_bookings');
-      if (saved) allStoredBookings = JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    const myPractice = allStoredBookings.filter((b) => b.studentId === pin && b.attendance_status === 'attended');
-    const matchedName = myPractice[0]?.realName || memberPins.find((p) => p.pin === pin)?.realName || '社員';
-    setMemberRealName(matchedName);
-    setMemberRecords(
-      myPractice.map((b) => ({
-        id: b.id,
-        date: b.date,
-        time: b.time,
-        nickname: b.nickname,
-        specificTime: b.time,
-        actualTime: b.actual_time,
-      }))
-    );
-
-    // 找出所有社課簽到相符者
-    const myClasses: MemberClassRecord[] = [];
-    classSessions.forEach((s) => {
-      s.attendees?.forEach((a) => {
-        if (a.studentId === pin) {
-          myClasses.push({
-            id: a.id,
-            sessionId: s.id,
-            sessionName: s.name,
-            date: s.date,
-            checkedAt: a.checkedAt,
-          });
-        }
-      });
-    });
-    setMemberClassRecords(myClasses);
   };
 
   const handleMemberPinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!memberPinInput.trim()) return;
+    setRegisterMessage(null);
     handleQueryMemberStats(memberPinInput.trim());
   };
 
@@ -1323,7 +1410,7 @@ export default function App() {
 
   // 彙整後台所有加練預約（排序與篩選今後預約）
   const { todayBookings, upcomingBookings, pastBookings } = useMemo(() => {
-    const allBookingsSource = adminBookings.length > 0 ? adminBookings : bookings;
+    const allBookingsSource = isAdminAuth ? adminBookings : bookings;
     const sorted = [...allBookingsSource].sort((a, b) => {
       const cmp = a.date.localeCompare(b.date);
       if (cmp !== 0) return cmp;
@@ -1335,7 +1422,7 @@ export default function App() {
     const past = sorted.filter((b) => b.date < todayStr).reverse(); // 歷史由新到舊
 
     return { todayBookings: todayList, upcomingBookings: upcoming, pastBookings: past };
-  }, [adminBookings, bookings, todayStr]);
+  }, [isAdminAuth, adminBookings, bookings, todayStr]);
 
   // 計算社員出席總名冊 (彙整全部預約、名冊與社課出席)
   const memberDirectory = useMemo(() => {
@@ -1359,7 +1446,7 @@ export default function App() {
     });
 
     // 2. 加練預約（僅計算已出席 attended 紀錄）
-    const allBookingsSource = adminBookings.length > 0 ? adminBookings : bookings;
+    const allBookingsSource = isAdminAuth ? adminBookings : bookings;
     allBookingsSource.forEach((b) => {
       const name = b.realName || b.nickname;
       if (!name) return;
@@ -1397,7 +1484,7 @@ export default function App() {
     });
 
     return Array.from(map.values()).sort((a, b) => b.totalHours - a.totalHours);
-  }, [memberPins, adminBookings, bookings, classSessions]);
+  }, [isAdminAuth, memberPins, adminBookings, bookings, classSessions]);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 視圖 1: 專屬社課掃碼簽到獨立頁面 (#/class-checkin?session=...)
@@ -1865,12 +1952,13 @@ export default function App() {
                   <div className="flex items-center gap-2">
                     {confirmDeleteMember ? (
                       <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3 py-1.5">
-                        <span className="text-xs font-semibold text-rose-700">刪除此成員紀錄？</span>
+                        <span className="text-xs font-semibold text-rose-700">永久刪除名冊綁定＋全部加練/社課紀錄？</span>
                         <button
                           onClick={() => deleteAdminMember(selectedMember)}
-                          className="text-xs bg-rose-600 text-white px-2.5 py-1 rounded-lg font-bold"
+                          disabled={deletingMember}
+                          className="text-xs bg-rose-600 text-white px-2.5 py-1 rounded-lg font-bold disabled:opacity-60"
                         >
-                          確定
+                          {deletingMember ? '刪除中…' : '確定'}
                         </button>
                         <button
                           onClick={() => setConfirmDeleteMember(false)}
@@ -1900,7 +1988,7 @@ export default function App() {
                 </div>
 
                 {(() => {
-                  const memberBookings = (adminBookings.length > 0 ? adminBookings : bookings)
+                  const memberBookings = (isAdminAuth ? adminBookings : bookings)
                     .filter((b) => (b.realName || b.nickname) === selectedMember);
                   const attendedBookings = memberBookings.filter((b) => b.attendance_status === 'attended');
                   const totalHrs = formatHours(
@@ -2092,43 +2180,113 @@ export default function App() {
                 {memberPins.length === 0 ? (
                   <p className="text-xs text-stone-400 py-6 text-center">尚未新增任何社員學號綁定</p>
                 ) : (
-                  memberPins.map((m) => (
-                    <div
-                      key={m.realName}
-                      className="flex items-center justify-between bg-stone-50 rounded-xl px-4 py-2.5 border border-stone-100 text-xs"
-                    >
-                      <span className="font-bold text-stone-800">{m.realName}</span>
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-xs bg-white border border-stone-200 px-2.5 py-1 rounded-md text-amber-800 font-bold">
-                          {m.pin}
-                        </span>
-                        {confirmDeletePin === m.realName ? (
-                          <div className="flex items-center gap-1">
+                  (() => {
+                    // 標出重複學號與舊資料中格式不符的學號，方便幹部清理
+                    const pinCount = new Map<string, number>();
+                    memberPins.forEach((p) => {
+                      const k = normalizePin(p.pin);
+                      pinCount.set(k, (pinCount.get(k) ?? 0) + 1);
+                    });
+                    return memberPins.map((m) => {
+                      const isDup = (pinCount.get(normalizePin(m.pin)) ?? 0) > 1;
+                      const isBadFormat = !!pinFormatError(m.pin);
+
+                      if (editingPinName === m.realName) {
+                        return (
+                          <div
+                            key={m.realName}
+                            className="flex items-center gap-2 bg-amber-50 rounded-xl px-3 py-2 border border-amber-200 text-xs flex-wrap"
+                          >
+                            <input
+                              type="text"
+                              value={editPinName}
+                              onChange={(e) => setEditPinName(e.target.value)}
+                              placeholder="真實姓名"
+                              autoFocus
+                              className="flex-1 min-w-[90px] px-2.5 py-1.5 rounded-lg border border-stone-200 focus:border-amber-600 outline-none text-xs"
+                            />
+                            <input
+                              type="text"
+                              value={editPinCode}
+                              onChange={(e) => setEditPinCode(e.target.value.toUpperCase())}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveEditPin();
+                                if (e.key === 'Escape') cancelEditPin();
+                              }}
+                              placeholder="學號"
+                              className="w-28 px-2.5 py-1.5 rounded-lg border border-stone-200 focus:border-amber-600 outline-none text-xs font-mono"
+                            />
                             <button
-                              onClick={() => handleDeletePin(m.realName)}
-                              className="text-xs bg-rose-600 text-white px-2 py-0.5 rounded font-bold"
+                              onClick={handleSaveEditPin}
+                              disabled={editPinSaving}
+                              className="text-xs bg-amber-600 text-white px-2.5 py-1 rounded-lg font-bold disabled:opacity-60"
                             >
-                              確定
+                              {editPinSaving ? '儲存中…' : '儲存'}
                             </button>
-                            <button
-                              onClick={() => setConfirmDeletePin(null)}
-                              className="text-xs text-stone-500 px-1 py-0.5"
-                            >
+                            <button onClick={cancelEditPin} className="text-xs text-stone-500 px-1 py-1">
                               取消
                             </button>
                           </div>
-                        ) : (
-                          <button
-                            onClick={() => setConfirmDeletePin(m.realName)}
-                            className="text-stone-400 hover:text-rose-500 p-1"
-                            title="刪除"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))
+                        );
+                      }
+
+                      return (
+                        <div
+                          key={m.realName}
+                          className="flex items-center justify-between bg-stone-50 rounded-xl px-4 py-2.5 border border-stone-100 text-xs"
+                        >
+                          <span className="font-bold text-stone-800">{m.realName}</span>
+                          <div className="flex items-center gap-2">
+                            {(isDup || isBadFormat) && (
+                              <span className="text-3xs font-bold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded">
+                                {isDup ? '學號重複' : '格式不符'}
+                              </span>
+                            )}
+                            <span
+                              className={`font-mono text-xs bg-white border px-2.5 py-1 rounded-md font-bold ${
+                                isDup || isBadFormat ? 'border-rose-300 text-rose-700' : 'border-stone-200 text-amber-800'
+                              }`}
+                            >
+                              {m.pin}
+                            </span>
+                            {confirmDeletePin === m.realName ? (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => handleDeletePin(m.realName)}
+                                  className="text-xs bg-rose-600 text-white px-2 py-0.5 rounded font-bold"
+                                >
+                                  確定
+                                </button>
+                                <button
+                                  onClick={() => setConfirmDeletePin(null)}
+                                  className="text-xs text-stone-500 px-1 py-0.5"
+                                >
+                                  取消
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => startEditPin(m)}
+                                  className="text-stone-400 hover:text-amber-600 p-1"
+                                  title="編輯姓名 / 學號"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => setConfirmDeletePin(m.realName)}
+                                  className="text-stone-400 hover:text-rose-500 p-1"
+                                  title="刪除"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()
                 )}
               </div>
             </div>
@@ -2153,8 +2311,8 @@ export default function App() {
           <h3 className="text-base font-black text-stone-800">個人加練出席查詢</h3>
           <p className="text-xs text-stone-500 mt-1">
             {memberQueryMode === 'register'
-              ? '首次使用請先登記真實姓名與學號，後台將建立專屬檔案'
-              : '已登記之社員，請直接輸入學號即可查詢'}
+              ? '首次使用請先登記真實姓名與學號（需英數組合），後台將建立專屬檔案'
+              : '已登記之社員，請輸入「學號」或「真實姓名」查詢加練紀錄'}
           </p>
         </div>
 
@@ -2173,7 +2331,7 @@ export default function App() {
             }`}
           >
             <Search className="w-3.5 h-3.5" />
-            <span>學號快速查詢</span>
+            <span>快速查詢 (學號 / 姓名)</span>
           </button>
           <button
             type="button"
@@ -2210,7 +2368,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 模式 1: 學號快速查詢 */}
+        {/* 模式 1: 學號或姓名快速查詢 */}
         {memberQueryMode === 'query' ? (
           <form onSubmit={handleMemberPinSubmit}>
             <div className="flex gap-2">
@@ -2219,8 +2377,8 @@ export default function App() {
                 required
                 value={memberPinInput}
                 onChange={(e) => setMemberPinInput(e.target.value)}
-                className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none transition-all font-mono text-xs"
-                placeholder="請輸入學號"
+                className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none transition-all text-xs"
+                placeholder="請輸入學號或真實姓名 (例: S15610214 或 何德利)"
               />
               <button
                 type="submit"
@@ -2247,13 +2405,13 @@ export default function App() {
                 />
               </div>
               <div>
-                <label className="block text-3xs font-bold text-stone-600 mb-1">學號 (PIN 碼)</label>
+                <label className="block text-3xs font-bold text-stone-600 mb-1">學號 (需英文字母+數字組合)</label>
                 <input
                   type="text"
                   required
                   value={registerStudentIdInput}
-                  onChange={(e) => setRegisterStudentIdInput(e.target.value)}
-                  placeholder="請輸入學號"
+                  onChange={(e) => setRegisterStudentIdInput(e.target.value.toUpperCase())}
+                  placeholder="例: S15610214"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-200 outline-none text-xs font-mono"
                 />
               </div>
@@ -2749,15 +2907,15 @@ export default function App() {
 
               <div className="space-y-1">
                 <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider">
-                  個人學號 (PIN) *
+                  個人學號 (PIN) * <span className="text-3xs text-stone-400 font-normal lowercase">(需英數組合，例: S15610214)</span>
                 </label>
                 <input
                   type="text"
                   required
                   value={formData.studentId}
-                  onChange={(e) => setFormData({ ...formData, studentId: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, studentId: e.target.value.toUpperCase() })}
                   className="w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-100 outline-none text-xs font-mono transition-all"
-                  placeholder="請輸入學號"
+                  placeholder="請輸入學號 (英數組合)"
                 />
               </div>
 
