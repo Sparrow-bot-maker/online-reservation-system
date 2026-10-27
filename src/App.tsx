@@ -48,6 +48,7 @@ type Booking = {
   attendance_status?: string;
   note?: string;
   actual_time?: string;
+  isMakeup?: boolean;
 };
 
 type AdminBooking = Booking & {
@@ -57,10 +58,23 @@ type AdminBooking = Booking & {
   actualTime?: string;
   attendance_status?: string;
   note?: string;
+  isMakeup?: boolean;
+};
+
+type MakeupCredit = {
+  id: number;
+  realName: string;
+  reason?: string;
+  sourceDate?: string;
+  usedBookingId?: string | null;
+  usedDate?: string | null;
+  usedTime?: string | null;
+  createdAt?: string;
 };
 
 type MemberRecord = {
   id: string;
+  isMakeup?: boolean;
   date: string;
   time: string;
   nickname: string;
@@ -227,6 +241,13 @@ const calculateHours = (timeRange: string, actualTimeRange?: string): number => 
     return 0;
   }
 };
+
+/** 計時數規則：已出席或免計缺席(excused)的原預約算時數；補騎預約本身不算時數 */
+const countsTowardHours = (b: { attendance_status?: string; isMakeup?: boolean }): boolean =>
+  !b.isMakeup && (b.attendance_status === 'attended' || b.attendance_status === 'excused');
+
+const recordHours = (r: MemberRecord): number =>
+  r.isMakeup ? 0 : calculateHours(r.specificTime || r.time, r.actualTime);
 
 const formatHours = (hours: number): string => {
   const rounded = Math.ceil(hours * 100) / 100;
@@ -476,9 +497,27 @@ export default function App() {
   // 幹部後台 State
   const [isAdminAuth, setIsAdminAuth] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
-  const [adminTab, setAdminTab] = useState<'overview' | 'members' | 'classes' | 'settings'>('overview');
+  const [adminTab, setAdminTab] = useState<'overview' | 'members' | 'classes' | 'makeup' | 'settings'>('overview');
   const [adminOverviewScope, setAdminOverviewScope] = useState<'today' | 'upcoming' | 'all'>('today');
   const [adminBookings, setAdminBookings] = useState<AdminBooking[]>([]);
+  // 實際加練時段編輯 / 補騎額度
+  const [editingActualId, setEditingActualId] = useState<string | null>(null);
+  const [editingActualValue, setEditingActualValue] = useState('');
+  const [makeupCredits, setMakeupCredits] = useState<MakeupCredit[]>([]);
+  const [grantName, setGrantName] = useState('');
+  const [grantSourceBookingId, setGrantSourceBookingId] = useState('');
+  const [grantReason, setGrantReason] = useState('');
+  const [availableMakeup, setAvailableMakeup] = useState(0);
+  const [useMakeup, setUseMakeup] = useState(false);
+  const [memberMakeupCount, setMemberMakeupCount] = useState(0);
+  const [grantMakeupModal, setGrantMakeupModal] = useState<{
+    realName: string;
+    sourceBookingId?: string;
+    sourceDate?: string;
+    sourceTime?: string;
+  } | null>(null);
+  const [grantMakeupReasonInput, setGrantMakeupReasonInput] = useState('');
+  const [grantMakeupSubmitting, setGrantMakeupSubmitting] = useState(false);
   const [memberPins, setMemberPins] = useState<MemberPin[]>([]);
   const [newPinName, setNewPinName] = useState('');
   const [newPinCode, setNewPinCode] = useState('');
@@ -508,7 +547,7 @@ export default function App() {
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
   const [confirmDeleteMember, setConfirmDeleteMember] = useState(false);
 
-  // 社員個人紀錄查詢 State (支援首次登記姓名與學號，之後只需輸入學號)
+  // 社員個人紀錄查詢 State (預設直接進入快速查詢，支援學號或本名)
   const [memberPinInput, setMemberPinInput] = useState(() => {
     try {
       return localStorage.getItem('app_my_student_id') || '';
@@ -516,13 +555,7 @@ export default function App() {
       return '';
     }
   });
-  const [memberQueryMode, setMemberQueryMode] = useState<'query' | 'register'>(() => {
-    try {
-      return localStorage.getItem('app_my_student_id') ? 'query' : 'register';
-    } catch {
-      return 'register';
-    }
-  });
+  const [memberQueryMode, setMemberQueryMode] = useState<'query' | 'register'>('query');
   const [registerRealNameInput, setRegisterRealNameInput] = useState(() => {
     try {
       return localStorage.getItem('app_my_real_name') || '';
@@ -592,13 +625,15 @@ export default function App() {
   // 加載後端管理員資料
   const fetchAdminData = useCallback(async (pwd: string) => {
     try {
-      const [bRes, cRes, pRes, pwdRes] = await Promise.all([
+      const [bRes, cRes, pRes, pwdRes, mRes] = await Promise.all([
         fetch('/api/admin/bookings', { headers: { 'x-admin-password': pwd } }),
         fetch('/api/admin/class-sessions', { headers: { 'x-admin-password': pwd } }),
         fetch('/api/admin/member-pins', { headers: { 'x-admin-password': pwd } }),
         fetch('/api/admin/checkin-password', { headers: { 'x-admin-password': pwd } }),
+        fetch('/api/admin/makeup-credits', { headers: { 'x-admin-password': pwd } }),
       ]);
       if (bRes.ok) setAdminBookings(await bRes.json());
+      if (mRes.ok) setMakeupCredits(await mRes.json());
       if (cRes.ok) {
         const cData = await cRes.json();
         if (Array.isArray(cData) && cData.length > 0) setClassSessions(cData);
@@ -753,12 +788,14 @@ export default function App() {
           realName: newBooking.realName,
           studentId: newBooking.studentId,
           specificTime: sanitizeTime(newBooking.time),
+          useMakeup,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         if (data.id) newBooking.id = data.id;
         if (data.realName) newBooking.realName = data.realName;
+        if (data.isMakeup !== undefined) newBooking.isMakeup = Boolean(data.isMakeup);
       } else if (res.status === 400) {
         const data = await res.json().catch(() => ({}));
         const msg = data.error || '預約失敗';
@@ -766,8 +803,16 @@ export default function App() {
         alert(msg);
         setShowModal(false);
         return;
+      } else if (useMakeup) {
+        alert('補騎預約失敗，額度未被扣除，請稍後再試');
+        return;
       }
     } catch {
+      // 補騎額度必須由伺服器扣除，不支援離線降級
+      if (useMakeup) {
+        alert('網路錯誤，補騎預約需連線至伺服器，請稍後再試');
+        return;
+      }
       // 離線降級
     }
 
@@ -802,13 +847,12 @@ export default function App() {
     }
 
     setShowModal(false);
+    setUseMakeup(false);
     setFormData({ nickname: '', realName: '', studentId: '' });
     fetchBookings(selectedDate);
   };
 
   const handleCancelBooking = async (id: string) => {
-    if (!window.confirm('確定要取消或刪除此筆加練預約嗎？')) return;
-
     try {
       await fetch(`/api/bookings/${id}`, { method: 'DELETE' });
     } catch {
@@ -818,6 +862,7 @@ export default function App() {
     setBookings((prev) => prev.filter((b) => b.id !== id));
     setAdminBookings((prev) => prev.filter((b) => b.id !== id));
     setMyBookingIds((prev) => prev.filter((myId) => myId !== id));
+    if (isAdminAuth && adminPassword) fetchAdminData(adminPassword);
 
     try {
       const saved = localStorage.getItem('app_bookings');
@@ -911,8 +956,154 @@ export default function App() {
     }
   };
 
+  // ─── 管理員：調整實際加練時段（時數自動由時段算出，留空 = 還原預約時段）──────
+  const handleSaveActualTime = async (id: string) => {
+    const value = editingActualValue.trim();
+    try {
+      const res = await fetch(`/api/admin/bookings/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
+        body: JSON.stringify({ actual_time: value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || '更新實際時段失敗');
+        return;
+      }
+      const stored = value ? sanitizeTime(value) : undefined;
+      setAdminBookings((prev) => prev.map((b) => (b.id === id ? { ...b, actualTime: stored } : b)));
+      setEditingActualId(null);
+    } catch {
+      alert('網路錯誤，更新失敗');
+    }
+  };
+
+  // ─── 管理員：補騎額度 ─────────────────────────────────────────────────────
+  /** 可編輯的時數儲存格（成員明細使用）：點擊鉛筆 → 輸入實際時段 → Enter 儲存，留空 = 還原 */
+  const renderHoursEditor = (b: AdminBooking, counted: boolean) => {
+    const actual = b.actualTime || b.actual_time;
+    if (editingActualId === b.id) {
+      return (
+        <div className="flex items-center gap-1">
+          <input
+            autoFocus
+            value={editingActualValue}
+            onChange={(e) => setEditingActualValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleSaveActualTime(b.id);
+              if (e.key === 'Escape') setEditingActualId(null);
+            }}
+            placeholder="14:00~17:30"
+            className="w-28 px-2 py-1 rounded-lg border border-stone-300 text-3xs font-mono font-normal text-stone-800 outline-none focus:border-amber-600"
+          />
+          <button type="button" onClick={() => handleSaveActualTime(b.id)} className="px-1.5 py-1 rounded-md bg-emerald-600 text-white text-3xs">
+            儲存
+          </button>
+          <button type="button" onClick={() => setEditingActualId(null)} className="px-1.5 py-1 rounded-md bg-stone-200 text-stone-600 text-3xs">
+            取消
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className={`font-bold text-right ${counted ? 'text-amber-700' : 'text-stone-400 line-through'}`}>
+          {b.isMakeup ? 0 : calculateHours(b.specificTime || b.time, actual)} hr
+          {actual && !b.isMakeup && (
+            <span className="block text-3xs font-normal text-stone-500 no-underline">
+              實際 {actual}（預約 {calculateHours(b.specificTime || b.time)} hr）
+            </span>
+          )}
+        </span>
+        {!b.isMakeup && (
+          <button
+            type="button"
+            title="調整實際加練時段（增減時數）"
+            onClick={() => {
+              setEditingActualId(b.id);
+              setEditingActualValue(actual || b.specificTime || b.time || '');
+            }}
+            className="text-3xs font-bold text-amber-700 hover:bg-amber-50 border border-amber-200 rounded-md px-1.5 py-0.5"
+          >
+            調整
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  // ─── 管理員：補騎額度 ─────────────────────────────────────────────────────
+  const handleGrantMakeup = async (realName: string, reason: string, sourceBookingId?: string) => {
+    try {
+      const res = await fetch('/api/admin/makeup-credits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
+        body: JSON.stringify({ realName, reason, sourceBookingId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || '發放失敗');
+        return false;
+      }
+      await fetchAdminData(adminPassword);
+      alert(data.message || '已發放補騎額度');
+      return true;
+    } catch {
+      alert('網路錯誤，發放失敗');
+      return false;
+    }
+  };
+
+  const handleRevokeMakeup = async (id: number) => {
+    try {
+      const res = await fetch(`/api/admin/makeup-credits/${id}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-password': adminPassword },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || '收回失敗');
+        return;
+      }
+      setMakeupCredits((prev) => prev.filter((c) => c.id !== id));
+    } catch {
+      alert('網路錯誤，收回失敗');
+    }
+  };
+
+  // 預約表單：輸入有效學號或本名後查詢可用補騎額度
+  useEffect(() => {
+    if (!showModal) {
+      setAvailableMakeup(0);
+      setUseMakeup(false);
+      return;
+    }
+    const pin = normalizePin(formData.studentId);
+    const name = formData.realName.trim();
+    const query = !pinFormatError(pin) ? pin : name;
+    if (!query) {
+      setAvailableMakeup(0);
+      setUseMakeup(false);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/member/makeup-credits?q=${encodeURIComponent(query)}`)
+      .then(async (r) => (r.ok ? r.json() : { available: 0 }))
+      .then((d) => {
+        if (cancelled) return;
+        setAvailableMakeup(d.available ?? 0);
+        if (!d.available) setUseMakeup(false);
+      })
+      .catch(() => {
+        if (!cancelled) setAvailableMakeup(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [formData.studentId, formData.realName, showModal]);
+
   // ─── 管理員手動切換加練出缺席狀態 ──────────────────────────────────────────
-  const handleUpdateBookingStatus = async (id: string, status: 'attended' | 'absent' | 'pending') => {
+  const handleUpdateBookingStatus = async (id: string, status: 'attended' | 'absent' | 'pending' | 'excused') => {
     try {
       await fetch(`/api/admin/bookings/${id}`, {
         method: 'PATCH',
@@ -1354,9 +1545,10 @@ export default function App() {
 
     try {
       const qs = `?q=${encodeURIComponent(query)}`;
-      const [statsRes, classRes] = await Promise.all([
+      const [statsRes, classRes, makeupRes] = await Promise.all([
         fetch(`/api/member/stats${qs}`),
         fetch(`/api/member/class-stats${qs}`),
+        fetch(`/api/member/makeup-credits${qs}`),
       ]);
 
       if (!statsRes.ok) {
@@ -1365,6 +1557,8 @@ export default function App() {
         setRegisterMessage({ type: 'error', text: data.error || '查無此學號或姓名' });
         return;
       }
+
+      setMemberMakeupCount(makeupRes.ok ? (await makeupRes.json()).available ?? 0 : 0);
 
       const statsData = await statsRes.json();
       setMemberRealName(statsData.realName || '');
@@ -1450,7 +1644,7 @@ export default function App() {
     allBookingsSource.forEach((b) => {
       const name = b.realName || b.nickname;
       if (!name) return;
-      if (b.attendance_status !== 'attended') return;
+      if (!countsTowardHours(b)) return;
       const current = map.get(name) || {
         realName: name,
         studentId: b.studentId || '',
@@ -1658,7 +1852,7 @@ export default function App() {
       <div className="space-y-6 animate-in fade-in duration-300 w-full min-w-0 box-border">
         {/* Admin Navigation Bar */}
         <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center bg-white p-3 rounded-2xl border border-stone-200 shadow-sm gap-2">
-          <div className="grid grid-cols-3 gap-1.5 w-full sm:w-auto">
+          <div className="grid grid-cols-4 gap-1.5 w-full sm:w-auto">
             <button
               onClick={() => setAdminTab('overview')}
               className={`px-3 py-2 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 ${
@@ -1669,6 +1863,17 @@ export default function App() {
             >
               <Calendar className="w-3.5 h-3.5" />
               加練預約
+            </button>
+            <button
+              onClick={() => setAdminTab('makeup')}
+              className={`px-3 py-2 font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 ${
+                adminTab === 'makeup'
+                  ? 'bg-amber-600 text-white shadow-md shadow-amber-200'
+                  : 'text-stone-600 hover:bg-stone-100'
+              }`}
+            >
+              <Dumbbell className="w-3.5 h-3.5" />
+              補騎
             </button>
             <button
               onClick={() => setAdminTab('members')}
@@ -1843,17 +2048,71 @@ export default function App() {
                                 </span>
                               )}
                             </td>
-                            <td className="py-2.5 px-3">{b.specificTime || b.time}</td>
+                            <td className="py-2.5 px-3">
+                              {b.specificTime || b.time}
+                              {b.isMakeup && (
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-3xs font-bold">補騎</span>
+                              )}
+                            </td>
                             <td className="py-2.5 px-3 font-mono text-amber-800 font-bold">{b.studentId || '—'}</td>
                             <td className="py-2.5 px-3 font-bold">{b.nickname}</td>
                             <td className="py-2.5 px-3">{b.realName || '—'}</td>
                             <td className="py-2.5 px-3 font-bold text-amber-700">
-                              {calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time)} hr
+                              {editingActualId === b.id ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    autoFocus
+                                    value={editingActualValue}
+                                    onChange={(e) => setEditingActualValue(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') handleSaveActualTime(b.id);
+                                      if (e.key === 'Escape') setEditingActualId(null);
+                                    }}
+                                    placeholder="14:00~17:30"
+                                    className="w-28 px-2 py-1 rounded-lg border border-stone-300 text-3xs font-mono font-normal text-stone-800 outline-none focus:border-amber-600"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveActualTime(b.id)}
+                                    className="px-1.5 py-1 rounded-md bg-emerald-600 text-white text-3xs"
+                                  >
+                                    儲存
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingActualId(null)}
+                                    className="px-1.5 py-1 rounded-md bg-stone-200 text-stone-600 text-3xs"
+                                  >
+                                    取消
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  title="點擊調整實際加練時段（留空儲存 = 還原）"
+                                  onClick={() => {
+                                    setEditingActualId(b.id);
+                                    setEditingActualValue(b.actualTime || b.actual_time || b.specificTime || b.time || '');
+                                  }}
+                                  className="text-left hover:bg-amber-50 rounded-md px-1 -mx-1"
+                                >
+                                  {b.isMakeup ? '0 hr（補騎不計）' : `${calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time)} hr`}
+                                  {(b.actualTime || b.actual_time) && (
+                                    <span className="block text-3xs font-normal text-stone-500">
+                                      實際 {b.actualTime || b.actual_time}（預約 {calculateHours(b.specificTime || b.time)} hr）
+                                    </span>
+                                  )}
+                                </button>
+                              )}
                             </td>
                             <td className="py-2.5 px-3 text-center">
                               {b.attendance_status === 'attended' ? (
                                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-3xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                                   <CheckCircle2 className="w-3 h-3 text-emerald-600" /> 已出席
+                                </span>
+                              ) : b.attendance_status === 'excused' ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-3xs font-bold bg-sky-100 text-sky-800 border border-sky-200">
+                                  免計缺席
                                 </span>
                               ) : b.attendance_status === 'absent' ? (
                                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-3xs font-bold bg-rose-100 text-rose-800 border border-rose-200">
@@ -1903,9 +2162,39 @@ export default function App() {
                                 >
                                   待定
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateBookingStatus(b.id, 'excused')}
+                                  className={`px-2 py-1 rounded-md text-3xs font-bold transition-all ${
+                                    b.attendance_status === 'excused'
+                                      ? 'bg-sky-600 text-white shadow-xs'
+                                      : 'text-stone-500 hover:text-sky-700 hover:bg-white'
+                                  }`}
+                                  title="免計缺席（不發補騎額度）"
+                                >
+                                  免計
+                                </button>
                               </div>
                             </td>
-                            <td className="py-2.5 px-3 text-center">
+                            <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                              {b.attendance_status !== 'attended' && b.attendance_status !== 'excused' && b.realName && !b.isMakeup && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setGrantMakeupReasonInput('');
+                                    setGrantMakeupModal({
+                                      realName: b.realName,
+                                      sourceBookingId: b.id,
+                                      sourceDate: b.date,
+                                      sourceTime: b.specificTime || b.time,
+                                    });
+                                  }}
+                                  className="text-3xs font-bold text-sky-700 hover:bg-sky-50 px-2 py-1 rounded-lg border border-sky-200 mr-1"
+                                  title="無法騎乘：發放補騎額度並免計缺席"
+                                >
+                                  給補騎
+                                </button>
+                              )}
                               <button
                                 onClick={() => handleCancelBooking(b.id)}
                                 className="text-stone-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition-colors"
@@ -1922,6 +2211,143 @@ export default function App() {
                 </div>
               );
             })()}
+          </div>
+        )}
+
+        {/* ── 補騎額度管理 ── */}
+        {adminTab === 'makeup' && (
+          <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-stone-200 space-y-5 box-border">
+            <div>
+              <h3 className="text-base font-black text-stone-800 flex items-center gap-2">
+                <Dumbbell className="w-5 h-5 text-amber-600" />
+                補騎額度管理
+              </h3>
+              <p className="text-3xs text-stone-400 mt-0.5">
+                只有幹部能發放。社員輸入學號預約時會看到「使用補騎額度」，時段規則與 8 人上限與一般加練相同。
+                若是針對某筆沒騎成的預約，請直接在「加練預約」列表按「給補騎」，該筆會自動標為免計缺席。
+              </p>
+            </div>
+
+            <form
+              className="flex flex-col sm:flex-row gap-2 flex-wrap"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!grantName || !grantSourceBookingId) return;
+                const ok = await handleGrantMakeup(grantName, grantReason, grantSourceBookingId);
+                if (ok) {
+                  setGrantReason('');
+                  setGrantSourceBookingId('');
+                }
+              }}
+            >
+              <select
+                value={grantName}
+                onChange={(e) => {
+                  const name = e.target.value;
+                  setGrantName(name);
+                  const eligible = adminBookings.filter(
+                    (b) =>
+                      (b.realName || b.nickname) === name &&
+                      b.attendance_status !== 'attended' &&
+                      b.attendance_status !== 'excused' &&
+                      !b.isMakeup
+                  );
+                  setGrantSourceBookingId(eligible[0]?.id || '');
+                }}
+                className="px-3 py-2.5 rounded-xl border border-stone-200 text-xs outline-none focus:border-amber-600"
+              >
+                <option value="">1. 選擇社員…</option>
+                {memberPins.map((p) => (
+                  <option key={p.realName} value={p.realName}>
+                    {p.realName}（{p.pin}）
+                  </option>
+                ))}
+              </select>
+              <select
+                value={grantSourceBookingId}
+                onChange={(e) => setGrantSourceBookingId(e.target.value)}
+                disabled={!grantName}
+                className="px-3 py-2.5 rounded-xl border border-stone-200 text-xs outline-none focus:border-amber-600 disabled:opacity-50"
+              >
+                <option value="">2. 選擇要補騎的原預約紀錄…</option>
+                {adminBookings
+                  .filter(
+                    (b) =>
+                      (b.realName || b.nickname) === grantName &&
+                      b.attendance_status !== 'attended' &&
+                      b.attendance_status !== 'excused' &&
+                      !b.isMakeup
+                  )
+                  .map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.date} · {b.specificTime || b.time}（{b.attendance_status === 'absent' ? '未出席' : '待點名'}）
+                    </option>
+                  ))}
+              </select>
+              <input
+                value={grantReason}
+                onChange={(e) => setGrantReason(e.target.value)}
+                placeholder="3. 原因（例：馬匹受傷）"
+                maxLength={200}
+                className="flex-1 min-w-[160px] px-3 py-2.5 rounded-xl border border-stone-200 text-xs outline-none focus:border-amber-600"
+              />
+              <button
+                type="submit"
+                disabled={!grantName || !grantSourceBookingId}
+                className="px-4 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 disabled:opacity-40"
+              >
+                發放 1 次
+              </button>
+            </form>
+
+            {makeupCredits.length === 0 ? (
+              <p className="text-xs text-stone-400 py-8 text-center">尚無補騎額度紀錄</p>
+            ) : (
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-left text-xs text-stone-700">
+                  <thead className="bg-stone-50 text-stone-500 font-bold border-b border-stone-100">
+                    <tr>
+                      <th className="py-2.5 px-3">社員</th>
+                      <th className="py-2.5 px-3">原因 / 原預約日</th>
+                      <th className="py-2.5 px-3">狀態</th>
+                      <th className="py-2.5 px-3 text-center">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {makeupCredits.map((c) => (
+                      <tr key={c.id} className="hover:bg-stone-50/80">
+                        <td className="py-2.5 px-3 font-bold">{c.realName}</td>
+                        <td className="py-2.5 px-3">
+                          {c.reason || '—'}
+                          {c.sourceDate && <span className="text-stone-400">（{c.sourceDate}）</span>}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {c.usedBookingId ? (
+                            <span className="text-emerald-700 font-bold">
+                              已使用{c.usedDate ? `：${c.usedDate} ${c.usedTime || ''}` : '（預約已不存在）'}
+                            </span>
+                          ) : (
+                            <span className="text-amber-700 font-bold">可使用</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {!c.usedBookingId && (
+                            <button
+                              type="button"
+                              onClick={() => handleRevokeMakeup(c.id)}
+                              className="text-stone-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50"
+                              title="收回額度"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
@@ -1990,7 +2416,7 @@ export default function App() {
                 {(() => {
                   const memberBookings = (isAdminAuth ? adminBookings : bookings)
                     .filter((b) => (b.realName || b.nickname) === selectedMember);
-                  const attendedBookings = memberBookings.filter((b) => b.attendance_status === 'attended');
+                  const attendedBookings = memberBookings.filter((b) => countsTowardHours(b));
                   const totalHrs = formatHours(
                     attendedBookings.reduce(
                       (sum, b) => sum + calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time),
@@ -2022,6 +2448,51 @@ export default function App() {
                         </div>
                       </div>
 
+                      {/* 補騎額度 */}
+                      {(() => {
+                        const myCredits = makeupCredits.filter((c) => c.realName === selectedMember);
+                        const available = myCredits.filter((c) => !c.usedBookingId).length;
+                        return (
+                          <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-200 space-y-2">
+                            <div className="flex justify-between items-center gap-2">
+                              <h4 className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                                <Dumbbell className="w-4 h-4 text-emerald-700" />
+                                補騎額度：可用 {available} 次（已使用 {myCredits.length - available} 次）
+                              </h4>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const eligible = memberBookings.filter(
+                                    (b) =>
+                                      b.attendance_status !== 'attended' &&
+                                      b.attendance_status !== 'excused' &&
+                                      !b.isMakeup
+                                  );
+                                  const first = eligible[0];
+                                  setGrantMakeupReasonInput('');
+                                  setGrantMakeupModal({
+                                    realName: selectedMember!,
+                                    sourceBookingId: first?.id,
+                                    sourceDate: first?.date,
+                                    sourceTime: first ? first.specificTime || first.time : undefined,
+                                  });
+                                }}
+                                className="text-3xs font-bold bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg hover:bg-emerald-700"
+                              >
+                                + 發放補騎
+                              </button>
+                            </div>
+                            {myCredits.map((c) => (
+                              <p key={c.id} className="text-3xs text-emerald-800">
+                                {c.usedBookingId ? '✔ 已使用' : '○ 可使用'}：{c.reason || '（無原因）'}
+                                {c.sourceDate && `（原預約 ${c.sourceDate}）`}
+                                {c.usedDate && ` → 補騎 ${c.usedDate} ${c.usedTime || ''}`}
+                              </p>
+                            ))}
+                          </div>
+                        );
+                      })()}
+
                       {/* 歷程細項 */}
                       <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 space-y-2">
                         <h4 className="text-xs font-bold text-stone-700 flex items-center gap-1.5">
@@ -2032,14 +2503,22 @@ export default function App() {
                           <p className="text-xs text-stone-400 py-3 text-center">無加練紀錄</p>
                         ) : (
                           memberBookings.map((b) => {
-                            const isAttended = b.attendance_status === 'attended';
+                            const isAttended = countsTowardHours(b);
                             const isAbsent = b.attendance_status === 'absent';
                             return (
                               <div key={b.id} className="bg-white p-2.5 rounded-xl border border-stone-200 text-xs flex justify-between items-center">
                                 <div>
                                   <div className="flex items-center gap-2">
                                     <p className="font-bold text-stone-800">{b.date}</p>
-                                    {isAttended ? (
+                                    {b.isMakeup ? (
+                                      <span className="text-3xs font-bold px-2 py-0.5 bg-sky-100 text-sky-800 rounded-md">
+                                        補騎（不計時數）
+                                      </span>
+                                    ) : b.attendance_status === 'excused' ? (
+                                      <span className="text-3xs font-bold px-2 py-0.5 bg-sky-100 text-sky-800 rounded-md">
+                                        免計缺席（照算時數）
+                                      </span>
+                                    ) : isAttended ? (
                                       <span className="text-3xs font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md">
                                         已出席
                                       </span>
@@ -2055,9 +2534,35 @@ export default function App() {
                                   </div>
                                   <p className="text-stone-400 mt-0.5">{b.specificTime || b.time}</p>
                                 </div>
-                                <span className={`font-bold ${isAttended ? 'text-amber-700' : 'text-stone-400 line-through'}`}>
-                                  {calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time)} hr
-                                </span>
+                                {isAdminAuth ? (
+                                  <div className="flex items-center gap-1.5">
+                                    {b.attendance_status !== 'attended' &&
+                                      b.attendance_status !== 'excused' &&
+                                      !b.isMakeup && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setGrantMakeupReasonInput('');
+                                            setGrantMakeupModal({
+                                              realName: selectedMember!,
+                                              sourceBookingId: b.id,
+                                              sourceDate: b.date,
+                                              sourceTime: b.specificTime || b.time,
+                                            });
+                                          }}
+                                          className="text-3xs font-bold text-sky-700 hover:bg-sky-50 px-2 py-0.5 rounded-md border border-sky-200"
+                                          title="將此筆原預約轉為補騎並免計缺席"
+                                        >
+                                          給補騎
+                                        </button>
+                                      )}
+                                    {renderHoursEditor(b as AdminBooking, isAttended)}
+                                  </div>
+                                ) : (
+                                  <span className={`font-bold ${isAttended ? 'text-amber-700' : 'text-stone-400 line-through'}`}>
+                                    {b.isMakeup ? 0 : calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time)} hr
+                                  </span>
+                                )}
                               </div>
                             );
                           })
@@ -2097,6 +2602,7 @@ export default function App() {
                           <th className="py-2.5 px-3">學號 (PIN)</th>
                           <th className="py-2.5 px-3">加練總時數</th>
                           <th className="py-2.5 px-3">加練次數</th>
+                          <th className="py-2.5 px-3">補騎額度</th>
                           <th className="py-2.5 px-3">明細</th>
                         </tr>
                       </thead>
@@ -2114,6 +2620,11 @@ export default function App() {
                               </td>
                               <td className="py-2.5 px-3 font-black text-amber-700">{formatHours(m.totalHours)} hr</td>
                               <td className="py-2.5 px-3">{m.practiceCount} 次</td>
+                              <td className="py-2.5 px-3 font-bold text-emerald-700">
+                                {makeupCredits.filter((c) => c.realName === m.realName && !c.usedBookingId).length || (
+                                  <span className="text-stone-300 font-normal">0</span>
+                                )}
+                              </td>
                               <td className="py-2.5 px-3">
                                 <button
                                   onClick={() => setSelectedMember(m.realName)}
@@ -2431,7 +2942,7 @@ export default function App() {
       {/* 查詢結果卡片 */}
       {submittedMemberPin && (() => {
         const memberTotalHours = memberRecords.reduce(
-          (sum, r) => sum + calculateHours(r.specificTime || r.time, r.actualTime),
+          (sum, r) => sum + recordHours(r),
           0
         );
         const riderBadge = getRiderTitle(memberTotalHours);
@@ -2456,6 +2967,27 @@ export default function App() {
             </div>
           </div>
 
+          {memberMakeupCount > 0 && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl p-3.5 text-xs">
+              <span className="font-bold">補騎額度：{memberMakeupCount} 次</span>
+              <p className="mt-1 text-3xs text-emerald-800">
+                步驟：① 按下方按鈕回預約頁 → ② 選明天或之後的日期與時段（09–12、14–18，至少 2 小時）→ ③ 按預約，在表單勾選「使用補騎額度」。
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setFormData((f) => ({ ...f, studentId: submittedMemberPin, realName: memberRealName }));
+                  setUserTab('加練');
+                  setView('user');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className="mt-2 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-3xs font-bold hover:bg-emerald-700"
+              >
+                前往預約（使用補騎）
+              </button>
+            </div>
+          )}
+
           {/* 3 大指標卡（社課出席已暫時隱藏） */}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-white p-4 rounded-2xl border border-stone-200 text-center shadow-xs">
@@ -2466,7 +2998,7 @@ export default function App() {
               <p className="text-xl font-black text-amber-700">
                 {formatHours(
                   memberRecords.reduce(
-                    (sum, r) => sum + calculateHours(r.specificTime || r.time, r.actualTime),
+                    (sum, r) => sum + recordHours(r),
                     0
                   )
                 )} <span className="text-xs font-normal text-stone-400">小時</span>
@@ -2504,7 +3036,7 @@ export default function App() {
                         <p className="text-stone-400">{r.specificTime || r.time}</p>
                       </div>
                       <span className="font-bold text-amber-700 bg-white px-2.5 py-1 rounded-lg border border-stone-200">
-                        {calculateHours(r.specificTime || r.time, r.actualTime)} hr
+                        {recordHours(r)} hr
                       </span>
                     </div>
                   ))}
@@ -2728,8 +3260,13 @@ export default function App() {
                     >
                       <div className="flex justify-between items-start gap-2">
                         <div className="space-y-1.5 min-w-0">
-                          <p className="font-black text-stone-800 text-xs flex items-center gap-1.5">
+                          <p className="font-black text-stone-800 text-xs flex items-center gap-1.5 flex-wrap">
                             <span className="truncate">{b.nickname}</span>
+                            {b.isMakeup && (
+                              <span className="text-3xs font-bold px-2 py-0.5 bg-emerald-600 text-white rounded-full shrink-0 shadow-2xs">
+                                🐎 補騎
+                              </span>
+                            )}
                             {isMine && (
                               <span className="text-3xs font-bold px-2 py-0.5 bg-amber-600 text-white rounded-full shrink-0">
                                 我的預約
@@ -2751,7 +3288,7 @@ export default function App() {
                               </span>
                             )}
                             <span className="text-3xs text-stone-400 font-bold">
-                              ({calculateHours(b.time)} hr)
+                              {b.isMakeup ? '(補騎・不計時數)' : `(${calculateHours(b.time)} hr)`}
                             </span>
                           </div>
 
@@ -2853,7 +3390,17 @@ export default function App() {
           ) : (
             <div className="inline-flex items-center bg-white/90 p-1 rounded-2xl border border-stone-200/90 shadow-2xs gap-1">
               <button
-                onClick={() => setView('member')}
+                onClick={() => {
+                  setRegisterMessage(null);
+                  setMemberQueryMode('query');
+                  setView('member');
+                  try {
+                    const savedPin = localStorage.getItem('app_my_student_id') || memberPinInput.trim();
+                    if (savedPin) handleQueryMemberStats(savedPin);
+                  } catch {
+                    // ignore
+                  }
+                }}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-stone-700 hover:text-amber-800 hover:bg-amber-50/80 transition-all whitespace-nowrap"
               >
                 <Award className="w-3.5 h-3.5 text-amber-600" />
@@ -2943,6 +3490,36 @@ export default function App() {
                 />
               </div>
 
+              {availableMakeup > 0 && (
+                <div className="space-y-2">
+                  <label className="flex items-start gap-2.5 p-3 rounded-2xl border border-emerald-200 bg-emerald-50 text-xs text-emerald-900 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useMakeup}
+                      onChange={(e) => setUseMakeup(e.target.checked)}
+                      className="mt-0.5 accent-emerald-600"
+                    />
+                    <span>
+                      <span className="font-bold">使用補騎額度</span>（剩餘 {availableMakeup} 次）
+                      <span className="block text-3xs text-emerald-700 mt-0.5">
+                        補騎同樣須符合時段規則與 8 人上限；取消預約會退還額度。
+                      </span>
+                    </span>
+                  </label>
+                  {useMakeup && (
+                    <div className="flex items-start gap-2 p-3 rounded-2xl border border-amber-300 bg-amber-50 text-xs text-amber-900">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                      <div>
+                        <p className="font-black">提醒：補騎不計入加練時數</p>
+                        <p className="text-3xs text-amber-800 mt-0.5">
+                          您原先未能騎乘的那次預約已照常計入時數，因此本次補騎僅補償騎乘機會，不會重複累加時數。
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="pt-3 flex gap-3">
                 <button
                   type="button"
@@ -2955,7 +3532,7 @@ export default function App() {
                   type="submit"
                   className="flex-1 px-4 py-3 rounded-xl bg-amber-600 text-white font-bold hover:bg-amber-700 shadow-md shadow-amber-200 text-xs transition-colors"
                 >
-                  確認預約
+                  {useMakeup ? '確認預約補騎（不計時數）' : '確認預約'}
                 </button>
               </div>
             </form>
@@ -3144,6 +3721,131 @@ export default function App() {
                   {checkinLoading ? '驗證中…' : '確認點名'}
                 </button>
               </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── 發放補騎額度 Modal（避開內建預覽器封鎖 window.prompt） ── */}
+      {grantMakeupModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs box-border">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden p-6 space-y-4 border border-sky-200">
+            <div className="flex justify-between items-center border-b border-stone-100 pb-3">
+              <div className="flex items-center gap-2 text-sky-700">
+                <Dumbbell className="w-5 h-5" />
+                <h3 className="font-black text-base text-stone-900">發放補騎額度</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setGrantMakeupModal(null)}
+                className="p-1 rounded-full text-stone-400 hover:bg-stone-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!grantMakeupModal.sourceBookingId) return;
+                setGrantMakeupSubmitting(true);
+                const ok = await handleGrantMakeup(
+                  grantMakeupModal.realName,
+                  grantMakeupReasonInput.trim() || '幹部核准補騎',
+                  grantMakeupModal.sourceBookingId
+                );
+                setGrantMakeupSubmitting(false);
+                if (ok) setGrantMakeupModal(null);
+              }}
+              className="space-y-4 text-xs"
+            >
+              {(() => {
+                const candidateBookings = adminBookings.filter(
+                  (b) =>
+                    (b.realName || b.nickname) === grantMakeupModal.realName &&
+                    b.attendance_status !== 'attended' &&
+                    b.attendance_status !== 'excused' &&
+                    !b.isMakeup
+                );
+                return (
+                  <>
+                    <div className="bg-sky-50 border border-sky-200 rounded-2xl p-3.5 space-y-1 text-sky-900">
+                      <p>
+                        發放對象：<span className="font-black">{grantMakeupModal.realName}</span>（+1 次補騎額度）
+                      </p>
+                      {grantMakeupModal.sourceDate && (
+                        <p className="text-3xs text-sky-800">
+                          原預約（{grantMakeupModal.sourceDate} {grantMakeupModal.sourceTime || ''}）將同步標記為「免計缺席（照算時數）」。
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block font-bold text-stone-700">1. 選擇要作為補騎依據的原預約紀錄 *：</label>
+                      {candidateBookings.length === 0 ? (
+                        <p className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-3xs font-semibold">
+                          此社員目前沒有可轉為補騎的預約紀錄（僅「未出席」或「待點名」且尚未發過補騎的一般預約可選擇）。
+                        </p>
+                      ) : (
+                        <select
+                          required
+                          value={grantMakeupModal.sourceBookingId || ''}
+                          onChange={(e) => {
+                            const picked = candidateBookings.find((b) => b.id === e.target.value);
+                            setGrantMakeupModal((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    sourceBookingId: picked?.id,
+                                    sourceDate: picked?.date,
+                                    sourceTime: picked ? picked.specificTime || picked.time : undefined,
+                                  }
+                                : null
+                            );
+                          }}
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 focus:border-sky-600 focus:ring-2 focus:ring-sky-100 outline-none text-xs font-semibold bg-white"
+                        >
+                          <option value="">-- 請選擇原預約紀錄 --</option>
+                          {candidateBookings.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.date} · {b.specificTime || b.time}（{b.attendance_status === 'absent' ? '未出席' : '待點名'} / {calculateHours(b.specificTime || b.time, b.actualTime || b.actual_time)} hr）
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block font-bold text-stone-700">2. 補騎原因（選填）：</label>
+                      <input
+                        type="text"
+                        value={grantMakeupReasonInput}
+                        onChange={(e) => setGrantMakeupReasonInput(e.target.value)}
+                        placeholder="例如：馬匹受傷、大雨場地封閉"
+                        maxLength={200}
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 focus:border-sky-600 focus:ring-2 focus:ring-sky-100 outline-none text-xs"
+                      />
+                    </div>
+
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setGrantMakeupModal(null)}
+                        className="flex-1 py-2.5 rounded-xl border border-stone-200 text-stone-600 font-bold text-xs hover:bg-stone-50"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={grantMakeupSubmitting || !grantMakeupModal.sourceBookingId}
+                        className="flex-1 py-2.5 rounded-xl bg-sky-600 text-white font-bold text-xs hover:bg-sky-700 disabled:opacity-40 transition-colors shadow-xs"
+                      >
+                        {grantMakeupSubmitting ? '發放中…' : '確認發放補騎'}
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
             </form>
           </div>
         </div>

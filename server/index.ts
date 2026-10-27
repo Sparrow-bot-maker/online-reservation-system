@@ -175,7 +175,7 @@ type MemberLookup = {
   error?: string;
 };
 
-/** 以學號（不分大小寫）或完整本名查詢名冊；名冊外的輸入一律視為查無此人 */
+/** 以學號（不分大小寫）或完整本名查詢名冊；若僅存在於 bookings 歷史預約中亦允許查詢（pin 回傳空字串） */
 async function findMember(query: string): Promise<MemberLookup> {
   const q = normalizeName(query);
   if (!q) return { ok: false, status: 400, error: '請輸入學號或姓名' };
@@ -183,13 +183,19 @@ async function findMember(query: string): Promise<MemberLookup> {
     SELECT real_name as "realName", pin FROM members
     WHERE UPPER(pin) = ${q.toUpperCase()} OR real_name = ${q}
   `;
-  if (rows.length === 0) {
-    return { ok: false, status: 404, error: '名冊中查無此學號或姓名，請確認輸入是否正確，或先完成首次登記' };
-  }
   if (rows.length > 1) {
     return { ok: false, status: 409, error: '此學號對應到多位社員，請聯絡幹部修正名冊' };
   }
-  return { ok: true, realName: rows[0].realName, pin: rows[0].pin };
+  if (rows.length === 1) {
+    return { ok: true, realName: rows[0].realName, pin: rows[0].pin };
+  }
+  const { rows: bRows } = await sql`
+    SELECT real_name as "realName" FROM bookings WHERE real_name = ${q} LIMIT 1
+  `;
+  if (bRows.length === 1) {
+    return { ok: true, realName: bRows[0].realName, pin: '' };
+  }
+  return { ok: false, status: 404, error: '名冊中查無此學號或姓名，請確認輸入是否正確，或先完成首次登記' };
 }
 
 /** 取得查詢字串：優先 ?q=（支援中文），相容舊版 x-member-pin header */
@@ -230,7 +236,8 @@ app.get('/api/bookings', async (req, res) => {
 
   try {
     const { rows } = await sql`
-      SELECT id, date, time, nickname, attendance_status FROM bookings WHERE date = ${date} ORDER BY created_at
+      SELECT id, date, time, nickname, attendance_status, COALESCE(is_makeup, false) as "isMakeup"
+      FROM bookings WHERE date = ${date} ORDER BY created_at
     `;
     res.json(rows);
   } catch (err) {
@@ -245,7 +252,7 @@ app.get('/api/bookings', async (req, res) => {
  * 新增預約，後端驗證日期範圍與容量
  */
 app.post('/api/bookings', async (req, res) => {
-  const { date, time, nickname, realName, specificTime, isMorningTraining, studentId } = req.body as {
+  const { date, time, nickname, realName, specificTime, isMorningTraining, studentId, useMakeup } = req.body as {
     date?: string;
     time?: string;
     nickname?: string;
@@ -253,6 +260,7 @@ app.post('/api/bookings', async (req, res) => {
     specificTime?: string;
     isMorningTraining?: boolean;
     studentId?: string;
+    useMakeup?: boolean;
   };
 
   // 欄位驗證
@@ -280,6 +288,12 @@ app.post('/api/bookings', async (req, res) => {
           return;
         }
         finalRealName = rows[0].realName;
+      } else if (rows.length === 0) {
+        // 首次預約填寫之學號+本名：若本名也尚未綁定其他學號，自動寫入名冊，讓「我的紀錄」與補騎可直接查詢
+        await sql`
+          INSERT INTO members (real_name, pin) VALUES (${finalRealName}, ${normalizedStudentId})
+          ON CONFLICT (real_name) DO NOTHING
+        `;
       }
     } catch (err) {
       console.error('學號比對失敗:', err);
@@ -315,6 +329,12 @@ app.post('/api/bookings', async (req, res) => {
     return;
   }
 
+  // 補騎僅適用一般加練時段（09–12 / 14–18），不可用於週五晨練
+  if (useMakeup && isFixedMorning) {
+    res.status(400).json({ error: '補騎僅限上午 09:00–12:00 或下午 14:00–18:00 時段' });
+    return;
+  }
+
   // 驗證下午時段最晚結束時間（2026-10-08 起改為 18:00）
   if (!isFixedMorning) {
     const [sStart, sEnd] = sanitizedSpecificTime.split('~');
@@ -326,6 +346,10 @@ app.post('/api/bookings', async (req, res) => {
     const endMins = toMins(sEnd);
     if (startMins % 30 !== 0 || endMins % 30 !== 0) {
       res.status(400).json({ error: '預約時間必須以 30 分鐘為間隔（例如整點或半點）' });
+      return;
+    }
+    if (endMins - startMins < 120) {
+      res.status(400).json({ error: '加練時長需至少滿 2 小時' });
       return;
     }
     const afternoonEnd = getAfternoonEnd(date);
@@ -359,10 +383,38 @@ app.post('/api/bookings', async (req, res) => {
 
   // 新增預約
   const id = Math.random().toString(36).substring(2, 9);
+  let claimedCredit = false;
   try {
+    // 補騎：必須是名冊社員（學號必填且與本名相符），並原子性地領取一張未使用的額度
+    if (useMakeup) {
+      if (!normalizedStudentId) {
+        res.status(400).json({ error: '使用補騎額度需填寫學號' });
+        return;
+      }
+      const member = await findMember(normalizedStudentId || finalRealName);
+      if (!member.ok || member.realName !== finalRealName) {
+        res.status(400).json({ error: '補騎僅限名冊內社員，且學號與姓名需相符' });
+        return;
+      }
+      const claim = await sql`
+        UPDATE makeup_credits SET used_booking_id = ${id}
+        WHERE id = (
+          SELECT id FROM makeup_credits
+          WHERE real_name = ${finalRealName} AND used_booking_id IS NULL
+          ORDER BY created_at, id LIMIT 1
+        ) AND used_booking_id IS NULL
+        RETURNING id
+      `;
+      if ((claim.rowCount ?? 0) === 0) {
+        res.status(400).json({ error: '您目前沒有可用的補騎額度，請聯絡幹部' });
+        return;
+      }
+      claimedCredit = true;
+    }
+
     await sql`
-      INSERT INTO bookings (id, date, time, nickname, real_name, specific_time) 
-      VALUES (${id}, ${date}, ${time}, ${nickname}, ${finalRealName}, ${sanitizedSpecificTime})
+      INSERT INTO bookings (id, date, time, nickname, real_name, specific_time, is_makeup) 
+      VALUES (${id}, ${date}, ${time}, ${nickname}, ${finalRealName}, ${sanitizedSpecificTime}, ${claimedCredit})
     `;
     
     res.status(201).json({
@@ -372,13 +424,23 @@ app.post('/api/bookings', async (req, res) => {
       nickname,
       realName: finalRealName,
       specificTime: sanitizedSpecificTime,
-      message: '預約成功',
+      isMakeup: claimedCredit,
+      message: claimedCredit ? '補騎預約成功（已扣除 1 次補騎額度）' : '預約成功',
     });
   } catch (err) {
     console.error(err);
+    if (claimedCredit) {
+      await sql`UPDATE makeup_credits SET used_booking_id = NULL WHERE used_booking_id = ${id}`.catch(() => {});
+    }
     res.status(500).json({ error: '資料庫寫入錯誤' });
   }
 });
+
+/** 預約被取消/刪除時退還補騎額度；已點名出席（額度已實際使用）則不退 */
+async function refundMakeupCredit(bookingId: string, attendanceStatus?: string | null) {
+  if (attendanceStatus === 'attended') return;
+  await sql`UPDATE makeup_credits SET used_booking_id = NULL WHERE used_booking_id = ${bookingId}`;
+}
 
 /**
  * DELETE /api/bookings/:id
@@ -388,13 +450,14 @@ app.delete('/api/bookings/:id', async (req, res) => {
   const { id } = req.params;
   
   try {
-    const result = await sql`DELETE FROM bookings WHERE id = ${id} RETURNING id`;
+    const result = await sql`DELETE FROM bookings WHERE id = ${id} RETURNING id, attendance_status`;
     
     if (result.rowCount === 0) {
       res.status(404).json({ error: '找不到此預約' });
       return;
     }
 
+    await refundMakeupCredit(id, result.rows[0].attendance_status);
     res.json({ message: '已成功取消預約' });
   } catch (err) {
     console.error(err);
@@ -546,10 +609,10 @@ app.get('/api/member/stats', async (req, res) => {
     }
 
     const { rows } = await sql`
-      SELECT id, date, time, nickname, specific_time as "specificTime", actual_time as "actualTime"
+      SELECT id, date, time, nickname, specific_time as "specificTime", actual_time as "actualTime", COALESCE(is_makeup, false) as "isMakeup"
       FROM bookings
       WHERE real_name = ${member.realName}
-        AND attendance_status = 'attended'
+        AND attendance_status IN ('attended', 'excused')
       ORDER BY date DESC
     `;
     res.json({ realName: member.realName, pin: member.pin, records: rows });
@@ -559,7 +622,139 @@ app.get('/api/member/stats', async (req, res) => {
   }
 });
 
+// ─── 補騎額度 ─────────────────────────────────────────────
+
+/**
+ * GET /api/member/makeup-credits?q=<學號或本名>
+ * 回傳該社員可用的補騎額度數量；名冊外一律 404
+ */
+app.get('/api/member/makeup-credits', async (req, res) => {
+  try {
+    const member = await findMember(getMemberQuery(req));
+    if (!member.ok) {
+      res.status(member.status!).json({ error: member.error });
+      return;
+    }
+    const { rows } = await sql`
+      SELECT COUNT(*)::int AS available FROM makeup_credits
+      WHERE real_name = ${member.realName} AND used_booking_id IS NULL
+    `;
+    res.json({ realName: member.realName, available: rows[0]?.available ?? 0 });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫查詢錯誤' });
+  }
+});
+
 // ─── 管理員 API ────────────────────────────────────────────
+
+/**
+ * GET /api/admin/makeup-credits
+ * 列出所有補騎額度（含使用狀況）
+ */
+app.get('/api/admin/makeup-credits', async (req, res) => {
+  if (req.headers['x-admin-password'] !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+  try {
+    const { rows } = await sql`
+      SELECT c.id, c.real_name as "realName", c.reason, c.source_date as "sourceDate",
+             c.used_booking_id as "usedBookingId", c.created_at as "createdAt",
+             b.date as "usedDate", b.specific_time as "usedTime"
+      FROM makeup_credits c
+      LEFT JOIN bookings b ON b.id = c.used_booking_id
+      ORDER BY c.created_at DESC, c.id DESC
+    `;
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫查詢錯誤' });
+  }
+});
+
+/**
+ * POST /api/admin/makeup-credits
+ * Body: { realName, reason?, sourceBookingId? }
+ * 發放 1 次補騎額度（僅限名冊內社員）。若帶 sourceBookingId，該原預約會標為 excused（免計缺席）
+ */
+app.post('/api/admin/makeup-credits', async (req, res) => {
+  if (req.headers['x-admin-password'] !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+  const reason = String(req.body?.reason ?? '').trim().slice(0, 200);
+  const sourceBookingId = req.body?.sourceBookingId ? String(req.body.sourceBookingId) : '';
+  try {
+    const member = await findMember(normalizeName(req.body?.realName));
+    if (!member.ok) {
+      res.status(member.status!).json({ error: member.error });
+      return;
+    }
+
+    let sourceDate = '';
+    if (sourceBookingId) {
+      const { rows: src } = await sql`SELECT date, real_name FROM bookings WHERE id = ${sourceBookingId}`;
+      if (src.length === 0) {
+        res.status(404).json({ error: '找不到原預約' });
+        return;
+      }
+      if (src[0].real_name !== member.realName) {
+        res.status(400).json({ error: '原預約不屬於此社員' });
+        return;
+      }
+      // 同一筆原預約只能發放一次，避免重複點擊多發額度
+      const { rows: dup } = await sql`
+        SELECT id FROM makeup_credits WHERE source_booking_id = ${sourceBookingId}
+      `;
+      if (dup.length > 0) {
+        res.status(409).json({ error: '此原預約已發放過補騎額度' });
+        return;
+      }
+      sourceDate = src[0].date;
+    }
+
+    await sql`
+      INSERT INTO makeup_credits (real_name, reason, source_date, source_booking_id)
+      VALUES (${member.realName}, ${reason}, ${sourceDate}, ${sourceBookingId || null})
+    `;
+    if (sourceBookingId) {
+      await sql`
+        UPDATE bookings SET attendance_status = 'excused',
+          note = CASE WHEN COALESCE(note, '') = '' THEN ${'補騎：' + reason} ELSE note END
+        WHERE id = ${sourceBookingId}
+      `;
+    }
+    res.status(201).json({ message: `已發放 ${member.realName} 1 次補騎額度` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫寫入錯誤' });
+  }
+});
+
+/**
+ * DELETE /api/admin/makeup-credits/:id
+ * 收回尚未使用的額度
+ */
+app.delete('/api/admin/makeup-credits/:id', async (req, res) => {
+  if (req.headers['x-admin-password'] !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+  try {
+    const result = await sql`
+      DELETE FROM makeup_credits WHERE id = ${Number(req.params.id)} AND used_booking_id IS NULL RETURNING id
+    `;
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: '找不到額度，或此額度已被使用（請改為刪除該筆補騎預約以退還）' });
+      return;
+    }
+    res.json({ message: '已收回補騎額度' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '資料庫刪除錯誤' });
+  }
+});
 
 /**
  * GET /api/admin/bookings?date=YYYY-MM-DD
@@ -577,12 +772,16 @@ app.get('/api/admin/bookings', async (req, res) => {
   try {
     const { rows } = date
       ? await sql`
-          SELECT id, date, time, nickname, real_name as "realName", specific_time as "specificTime", actual_time as "actualTime", attendance_status, note, created_at 
-          FROM bookings WHERE date = ${date} ORDER BY time, created_at
+          SELECT b.id, b.date, b.time, b.nickname, b.real_name as "realName", m.pin as "studentId", b.specific_time as "specificTime", b.actual_time as "actualTime", b.attendance_status, b.note, b.is_makeup as "isMakeup", b.created_at 
+          FROM bookings b
+          LEFT JOIN members m ON m.real_name = b.real_name
+          WHERE b.date = ${date} ORDER BY b.time, b.created_at
         `
       : await sql`
-          SELECT id, date, time, nickname, real_name as "realName", specific_time as "specificTime", actual_time as "actualTime", attendance_status, note, created_at 
-          FROM bookings ORDER BY date, time, created_at
+          SELECT b.id, b.date, b.time, b.nickname, b.real_name as "realName", m.pin as "studentId", b.specific_time as "specificTime", b.actual_time as "actualTime", b.attendance_status, b.note, b.is_makeup as "isMakeup", b.created_at 
+          FROM bookings b
+          LEFT JOIN members m ON m.real_name = b.real_name
+          ORDER BY b.date, b.time, b.created_at
         `;
 
     res.json(rows);
@@ -607,11 +806,40 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
   const { id } = req.params;
   const { attendance_status, note, actual_time } = req.body;
 
+  if (attendance_status !== undefined && !['pending', 'attended', 'absent', 'excused'].includes(attendance_status)) {
+    res.status(400).json({ error: '無效的點名狀態' });
+    return;
+  }
+
+  // 實際加練時段：留空 = 還原為預約時段；否則需為 HH:MM~HH:MM、30 分鐘刻度、結束晚於開始
+  let actualTimeVal: string | null | undefined;
+  if (actual_time !== undefined) {
+    if (actual_time === '' || actual_time === null) {
+      actualTimeVal = null;
+    } else {
+      const clean = sanitizeTime(String(actual_time));
+      const m = clean.match(/^(\d{2}):(\d{2})~(\d{2}):(\d{2})$/);
+      if (!m) {
+        res.status(400).json({ error: '實際時段格式錯誤，請輸入如 14:00~17:30' });
+        return;
+      }
+      const s = Number(m[1]) * 60 + Number(m[2]);
+      const e = Number(m[3]) * 60 + Number(m[4]);
+      if (Number(m[2]) > 59 || Number(m[4]) > 59 || e <= s || e > 24 * 60) {
+        res.status(400).json({ error: '實際時段不合理：結束時間必須晚於開始時間' });
+        return;
+      }
+      if (s % 30 !== 0 || e % 30 !== 0) {
+        res.status(400).json({ error: '實際時段需以 30 分鐘為刻度' });
+        return;
+      }
+      actualTimeVal = clean;
+    }
+  }
+
   try {
-    if (actual_time !== undefined) {
-      // 後台時間覆蓋：無格式限制，允許 null 清除覆蓋
-      const val = actual_time === '' ? null : actual_time;
-      await sql`UPDATE bookings SET actual_time = ${val} WHERE id = ${id}`;
+    if (actualTimeVal !== undefined) {
+      await sql`UPDATE bookings SET actual_time = ${actualTimeVal} WHERE id = ${id}`;
     }
     if (attendance_status !== undefined && note !== undefined) {
       await sql`UPDATE bookings SET attendance_status = ${attendance_status}, note = ${note} WHERE id = ${id}`;
@@ -662,11 +890,12 @@ app.delete('/api/admin/bookings/:id', async (req, res) => {
 
   const { id } = req.params;
   try {
-    const result = await sql`DELETE FROM bookings WHERE id = ${id} RETURNING id`;
+    const result = await sql`DELETE FROM bookings WHERE id = ${id} RETURNING id, attendance_status`;
     if (result.rowCount === 0) {
       res.status(404).json({ error: '找不到此預約' });
       return;
     }
+    await refundMakeupCredit(id, result.rows[0].attendance_status);
     res.json({ message: '已刪除' });
   } catch (err) {
     console.error(err);
@@ -692,6 +921,7 @@ app.delete('/api/admin/members/:realName', async (req, res) => {
     const counts = await withTransaction(async (client) => {
       const b = await client.sql`DELETE FROM bookings WHERE real_name = ${realName} RETURNING id`;
       const c = await client.sql`DELETE FROM class_attendance WHERE real_name = ${realName} RETURNING id`;
+      await client.sql`DELETE FROM makeup_credits WHERE real_name = ${realName}`;
       const m = await client.sql`DELETE FROM members WHERE real_name = ${realName} RETURNING real_name`;
       return { bookings: b.rowCount ?? 0, classAttendance: c.rowCount ?? 0, member: m.rowCount ?? 0 };
     });
@@ -820,6 +1050,7 @@ app.patch('/api/admin/member-pins/:realName', async (req, res) => {
       if (newName !== oldName) {
         const b = await client.sql`UPDATE bookings SET real_name = ${newName} WHERE real_name = ${oldName}`;
         const c = await client.sql`UPDATE class_attendance SET real_name = ${newName} WHERE real_name = ${oldName}`;
+        await client.sql`UPDATE makeup_credits SET real_name = ${newName} WHERE real_name = ${oldName}`;
         movedBookings = b.rowCount ?? 0;
         movedClasses = c.rowCount ?? 0;
       }
@@ -875,6 +1106,7 @@ app.delete('/api/admin/clear-all-data', async (req, res) => {
     return;
   }
   try {
+    await sql`DELETE FROM makeup_credits`;
     await sql`DELETE FROM class_attendance`;
     await sql`DELETE FROM bookings`;
     await sql`DELETE FROM members`;

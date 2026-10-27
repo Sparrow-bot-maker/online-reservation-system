@@ -21,6 +21,22 @@ export async function initDb() {
     // 後台時間覆蓋欄位（NULL = 使用原始 specific_time）
     await sql`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS actual_time VARCHAR(255) DEFAULT NULL;`;
 
+    // 補騎預約標記（由補騎額度建立的預約）
+    await sql`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS is_makeup BOOLEAN DEFAULT false;`;
+
+    // 補騎額度表：與預約紀錄脫鉤，used_booking_id 為 NULL 代表尚未使用
+    await sql`
+      CREATE TABLE IF NOT EXISTS makeup_credits (
+        id              SERIAL PRIMARY KEY,
+        real_name       VARCHAR(255) NOT NULL,
+        reason          TEXT DEFAULT '',
+        source_date     VARCHAR(50) DEFAULT '',
+        source_booking_id VARCHAR(255) DEFAULT NULL,
+        used_booking_id VARCHAR(255) DEFAULT NULL,
+        created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `;
+
     // 社員 PIN 表
     await sql`
       CREATE TABLE IF NOT EXISTS members (
